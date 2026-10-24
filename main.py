@@ -83,6 +83,9 @@ class Simulator:
 
         # Draw Animals
         for a in self.animals:
+            if getattr(a, 'is_hidden', False):
+                continue
+
             color = config.C_RABBIT
             if a.species == 'deer': color = config.C_DEER
             elif a.species == 'wolf': color = config.C_WOLF

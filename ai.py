@@ -28,6 +28,17 @@ class AnimalAI:
         self.memory_map = {} # grid-based spatial memory: {'danger': 0, 'food': 0, 'water': 0}
         self.grid_size = 50
 
+        # Generational Memory Transfer
+        if parents and len(parents) == 2 and parents[0] and parents[1]:
+            parent_maps = [parents[0].ai.memory_map, parents[1].ai.memory_map]
+            for p_map in parent_maps:
+                for key, val in p_map.items():
+                    if key not in self.memory_map:
+                        self.memory_map[key] = {'danger': 0.0, 'food': 0.0, 'water': 0.0}
+                    self.memory_map[key]['danger'] += val['danger'] * 0.25
+                    self.memory_map[key]['food'] += val['food'] * 0.25
+                    self.memory_map[key]['water'] += val['water'] * 0.25
+
     def get_grid_key(self, x, y):
         return (int(x // self.grid_size), int(y // self.grid_size))
 
@@ -55,9 +66,48 @@ class AnimalAI:
     def calculate_force(self, entity, world, animals):
         fx, fy = 0.0, 0.0
 
+        # Survival Overrides (Critical Thresholds)
+        hunger_ratio = entity.hunger / entity.max_hunger
+        thirst_ratio = entity.thirst / entity.max_thirst
+
+        if hunger_ratio < 0.2:
+            entity.state = "STARVING"
+        elif thirst_ratio < 0.2:
+            entity.state = "DEHYDRATED"
+        elif entity.state in ["STARVING", "DEHYDRATED"]:
+            entity.state = "FORAGING"
+
         # Dynamic weights based on FSM state
         current_food_weight = self.weights['food']
         current_predator_weight = self.weights['predator']
+        current_water_weight = self.weights['water']
+        herd_multiplier = 1.0
+
+        if entity.state == "STARVING":
+            current_food_weight *= 10.0
+            herd_multiplier = 0.0
+        elif entity.state == "DEHYDRATED":
+            current_water_weight *= 10.0
+            herd_multiplier = 0.0
+
+        # Protective Herding logic (Adult male deer overriding state)
+        if entity.species == 'deer' and entity.gender == 'male' and entity.is_adult and entity.state not in ["STARVING", "DEHYDRATED"]:
+            baby_in_danger = False
+            for other in animals:
+                if other.species == 'deer' and not other.is_adult and not other.dead:
+                    if math.hypot(other.x - entity.x, other.y - entity.y) < 150:
+                        # Check for wolf near baby
+                        for wolf in animals:
+                            if wolf.species == 'wolf' and not wolf.dead:
+                                if math.hypot(wolf.x - other.x, wolf.y - other.y) < 150:
+                                    baby_in_danger = True
+                                    break
+                        if baby_in_danger:
+                            break
+            if baby_in_danger:
+                entity.state = "AGGRESSIVE"
+            elif entity.state == "AGGRESSIVE":
+                entity.state = "FORAGING"
 
         if getattr(entity, 'state', 'FORAGING') == 'FLEEING':
             current_food_weight = 0.0
@@ -104,9 +154,9 @@ class AnimalAI:
         if entity.thirst < entity.max_thirst * 0.7:
             # River pull (vertical)
             if entity.y < world.river.y:
-                fy += self.weights['water'] * water_mult * thirst_force
+                fy += current_water_weight * water_mult * thirst_force
             elif entity.y > world.river.y + world.river.h:
-                fy -= self.weights['water'] * water_mult * thirst_force
+                fy -= current_water_weight * water_mult * thirst_force
             # Waterhole pull
             for wh in world.water_holes:
                 if not wh.frozen:
@@ -114,13 +164,61 @@ class AnimalAI:
                     dy = wh.y - entity.y
                     dist = math.hypot(dx, dy)
                     if dist < 300 and dist > 0:
-                        fx += (dx / dist) * self.weights['water'] * water_mult * thirst_force
-                        fy += (dy / dist) * self.weights['water'] * water_mult * thirst_force
+                        fx += (dx / dist) * current_water_weight * water_mult * thirst_force
+                        fy += (dy / dist) * current_water_weight * water_mult * thirst_force
+
+        # Water Repulsion if full
+        if entity.thirst > entity.max_thirst * 0.95 and world.in_water(entity.x, entity.y):
+            if entity.y >= world.river.y and entity.y <= world.river.y + world.river.h:
+                if entity.y < world.river.y + world.river.h / 2:
+                    fy -= 5.0 # Push up out of river
+                else:
+                    fy += 5.0 # Push down out of river
+            else:
+                for wh in world.water_holes:
+                    if not wh.frozen:
+                        if (wh.x - wh.w//2) <= entity.x <= (wh.x + wh.w//2) and (wh.y - wh.h//2) <= entity.y <= (wh.y + wh.h//2):
+                            dx = entity.x - wh.x
+                            dy = entity.y - wh.y
+                            dist = math.hypot(dx, dy)
+                            if dist > 0:
+                                fx += (dx / dist) * 5.0
+                                fy += (dy / dist) * 5.0
 
         # 3. Predators & Prey & Friends (including Boids)
         boids_neighbors = 0
         avg_vx, avg_vy = 0.0, 0.0
         center_x, center_y = 0.0, 0.0
+
+        # Wolf Attention Span Logic
+        if entity.species == 'wolf':
+            if getattr(entity, 'wander_timer', 0) > 0:
+                entity.state = "WANDERING"
+                entity.chase_target = None
+            else:
+                entity.state = "HUNTING"
+                # Determine target if not set or target invalid
+                if not entity.chase_target or entity.chase_target.dead or getattr(entity.chase_target, 'is_hidden', False) or entity.chase_target in getattr(entity, 'ignored_prey', {}):
+                    best_target = None
+                    best_dist = float('inf')
+                    for a in animals:
+                        if a.species in ['rabbit', 'deer'] and not a.dead and not getattr(a, 'is_hidden', False) and a not in getattr(entity, 'ignored_prey', {}):
+                            d = math.hypot(a.x - entity.x, a.y - entity.y)
+                            if d < 300 and d < best_dist:
+                                best_dist = d
+                                best_target = a
+                    if best_target:
+                        entity.chase_target = best_target
+                        entity.chase_timer = 0
+
+                if entity.chase_target:
+                    entity.chase_timer += 1
+                    if entity.chase_timer > 300: # 5 seconds
+                        # Drop target
+                        if hasattr(entity, 'ignored_prey'):
+                            entity.ignored_prey[entity.chase_target] = 1200 # Ignore for 20 seconds
+                        entity.chase_target = None
+                        entity.wander_timer = 300 # Wander for 5 seconds
 
         for other in animals:
             if other == entity or other.dead: continue
@@ -130,20 +228,30 @@ class AnimalAI:
 
             if dist < 200 and dist > 0:
                 if entity.species == 'wolf' and other.species in ['rabbit', 'deer']:
-                    # Prey - Predictive Pathing
-                    target_x = other.x + other.vx * 10
-                    target_y = other.y + other.vy * 10
-                    pdx = target_x - entity.x
-                    pdy = target_y - entity.y
-                    pdist = math.hypot(pdx, pdy)
-                    if pdist > 0:
-                        fx += (pdx / pdist) * self.weights['prey']
-                        fy += (pdy / pdist) * self.weights['prey']
+                    # Prey - Predictive Pathing (only if it's the chase target or if wandering, ignore)
+                    if entity.state != "WANDERING" and other == entity.chase_target:
+                        target_x = other.x + other.vx * 10
+                        target_y = other.y + other.vy * 10
+                        pdx = target_x - entity.x
+                        pdy = target_y - entity.y
+                        pdist = math.hypot(pdx, pdy)
+                        if pdist > 0:
+                            fx += (pdx / pdist) * self.weights['prey']
+                            fy += (pdy / pdist) * self.weights['prey']
+                    # Wolf repelled by aggressive deer
+                    if other.species == 'deer' and getattr(other, 'state', '') == 'AGGRESSIVE':
+                        fx -= (dx / dist) * self.weights['prey'] * 2.0
+                        fy -= (dy / dist) * self.weights['prey'] * 2.0
                 elif entity.species in ['rabbit', 'deer'] and other.species == 'wolf':
                     # Predator
-                    fx += (dx / dist) * current_predator_weight
-                    fy += (dy / dist) * current_predator_weight
-                    entity.ai.update_memory(entity.x, entity.y, 5, 'danger') # Negative association
+                    if entity.state == "AGGRESSIVE":
+                        # Rush the wolf to push it away
+                        fx += (dx / dist) * abs(current_predator_weight) * 2.0
+                        fy += (dy / dist) * abs(current_predator_weight) * 2.0
+                    else:
+                        fx += (dx / dist) * current_predator_weight
+                        fy += (dy / dist) * current_predator_weight
+                        entity.ai.update_memory(entity.x, entity.y, 5, 'danger') # Negative association
                 elif entity.species == other.species:
                     if entity.species == 'wolf':
                         # Wolf Flanking (Separation overrides herding)
@@ -152,16 +260,23 @@ class AnimalAI:
                             fy -= (dy / dist) * self.weights['separation']
                     else:
                         # Friend/Pack (Herd mentality - Boids) for herbivores
-                        boids_neighbors += 1
-                        avg_vx += other.vx
-                        avg_vy += other.vy
-                        center_x += other.x
-                        center_y += other.y
+                        if boids_neighbors < 5:
+                            boids_neighbors += 1
+                            avg_vx += other.vx
+                            avg_vy += other.vy
+                            center_x += other.x
+                            center_y += other.y
 
                         if dist < 50:
                             # Separation
-                            fx -= (dx / dist) * self.weights['separation']
-                            fy -= (dy / dist) * self.weights['separation']
+                            sep_weight = self.weights['separation']
+                            # If adult male deer near baby, drop separation to keep them tight
+                            if entity.species == 'deer' and entity.gender == 'male' and entity.is_adult and not other.is_adult:
+                                sep_weight = 0.0
+
+                            if sep_weight > 0:
+                                fx -= (dx / dist) * sep_weight
+                                fy -= (dy / dist) * sep_weight
 
         if boids_neighbors > 0:
             avg_vx /= boids_neighbors
@@ -172,16 +287,16 @@ class AnimalAI:
             # Alignment
             if math.hypot(avg_vx, avg_vy) > 0:
                 mag = math.hypot(avg_vx, avg_vy)
-                fx += (avg_vx / mag) * self.weights['alignment']
-                fy += (avg_vy / mag) * self.weights['alignment']
+                fx += (avg_vx / mag) * self.weights['alignment'] * herd_multiplier
+                fy += (avg_vy / mag) * self.weights['alignment'] * herd_multiplier
 
             # Cohesion
             cdx = center_x - entity.x
             cdy = center_y - entity.y
             cdist = math.hypot(cdx, cdy)
             if cdist > 0:
-                fx += (cdx / cdist) * self.weights['cohesion']
-                fy += (cdy / cdist) * self.weights['cohesion']
+                fx += (cdx / cdist) * self.weights['cohesion'] * herd_multiplier
+                fy += (cdy / cdist) * self.weights['cohesion'] * herd_multiplier
 
         # Add random wander
         fx += random.uniform(-0.5, 0.5)
@@ -211,6 +326,18 @@ class AnimalAI:
             if dist > 0:
                 fx += (dx / dist) * mem_vals['food'] * 0.5
                 fy += (dy / dist) * mem_vals['food'] * 0.5
+
+        # Territory Establishment (Home Ranges)
+        if hunger_ratio > 0.8 and thirst_ratio > 0.8:
+            if getattr(entity, 'home_range', None) is None:
+                entity.home_range = (entity.x, entity.y)
+
+        if getattr(entity, 'home_range', None) is not None:
+            hrx, hry = entity.home_range
+            dist_to_hr = math.hypot(hrx - entity.x, hry - entity.y)
+            if dist_to_hr > 200:
+                fx += (hrx - entity.x) / dist_to_hr * 0.5
+                fy += (hry - entity.y) / dist_to_hr * 0.5
 
         # Normalize force
         mag = math.hypot(fx, fy)
