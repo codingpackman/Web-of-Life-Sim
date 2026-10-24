@@ -46,6 +46,8 @@ class Animal:
         self.vx = 0.0
         self.vy = 0.0
         self.state = "FORAGING"
+        self.is_hidden = False
+        self.home_range = None
 
     def mutate(self):
         # Evolution: Slight variations in stats from parents
@@ -91,8 +93,12 @@ class Animal:
                         self.ai.memory_map[key]['food'] = max(self.ai.memory_map[key]['food'], mem['food'])
                         self.ai.memory_map[key]['water'] = max(self.ai.memory_map[key]['water'], mem['water'])
 
-        self.hunger -= self.hunger_loss
-        self.thirst -= self.thirst_loss
+        if getattr(self, 'is_hidden', False):
+            self.hunger -= self.hunger_loss * 0.2
+            self.thirst -= self.thirst_loss * 0.2
+        else:
+            self.hunger -= self.hunger_loss
+            self.thirst -= self.thirst_loss
 
         if self.hunger <= 0 or self.thirst <= 0:
             self.health -= 0.1
@@ -141,14 +147,20 @@ class Animal:
                     predator_near = True
                     break
 
+        # Predator check is now handled in ai.py via state overrides, but we leave the state setting here
+        # or we remove predator_near. Wait, actually we can just keep predator_near, but ai.py can override it.
+        # Actually, let's keep it here but let ai.py handle complex states. Wait, ai.py just uses state.
+        # The prompt says: "In Rabbit.update, set self.is_hidden = True if the rabbit's state is "FLEEING", it has a home_burrow, and is within 10 pixels of it. Otherwise, set it to False."
         if predator_near:
-            self.state = "FLEEING"
+            if self.state not in ["STARVING", "DEHYDRATED"]:
+                self.state = "FLEEING"
             # Rabbit burrow reinforcement
             if self.species == 'rabbit' and hasattr(self, 'home_burrow') and self.home_burrow:
                 if math.hypot(self.home_burrow.x - self.x, self.home_burrow.y - self.y) < 10:
                     self.ai.weights['burrow'] *= 1.05 # Reached burrow, positive reinforcement
         else:
-            self.state = "FORAGING"
+            if self.state not in ["STARVING", "DEHYDRATED", "AGGRESSIVE"]:
+                self.state = "FORAGING"
 
         # Bounds checking
         self.x = max(0, min(config.SCREEN_WIDTH, self.x))
@@ -180,6 +192,11 @@ class Rabbit(Animal):
     def update(self, world, animals):
         super().update(world, animals)
         if self.dead: return
+
+        if self.state == "FLEEING" and self.home_burrow and math.hypot(self.home_burrow.x - self.x, self.home_burrow.y - self.y) < 10:
+            self.is_hidden = True
+        else:
+            self.is_hidden = False
 
         # Dig burrow if male adult and no home
         if self.gender == "male" and self.is_adult and not self.home_burrow:
@@ -298,11 +315,26 @@ class Wolf(Animal):
         self.damage = config.ANIMAL_STATS['wolf']['damage']
         self.mate = None
         self.attack_cooldown = 0
+        self.chase_target = None
+        self.chase_timer = 0
+        self.wander_timer = 0
+        self.ignored_prey = {}
 
     def update(self, world, animals):
         super().update(world, animals)
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
+
+        if self.wander_timer > 0:
+            self.wander_timer -= 1
+
+        keys_to_delete = []
+        for prey, timer in self.ignored_prey.items():
+            self.ignored_prey[prey] -= 1
+            if self.ignored_prey[prey] <= 0:
+                keys_to_delete.append(prey)
+        for prey in keys_to_delete:
+            del self.ignored_prey[prey]
 
     def eat(self, world):
         pass # Wolf eating is handled in hunting logic (below)
@@ -326,6 +358,8 @@ class Wolf(Animal):
     def hunt(self, animals):
         if self.attack_cooldown <= 0:
             for a in animals:
+                if getattr(a, 'is_hidden', False):
+                    continue
                 if a.species in ['rabbit', 'deer'] and not a.dead:
                     if math.hypot(self.x - a.x, self.y - a.y) < self.radius + a.radius + 5:
                         a.health -= self.damage
