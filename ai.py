@@ -121,6 +121,17 @@ class AnimalAI:
                 if bdist > 0:
                     fx += (bdx / bdist) * self.weights['burrow'] * 5.0
 
+        if getattr(entity, 'state', 'FORAGING') == 'HOARDING':
+            current_food_weight *= 2.0
+            if entity.species == 'rabbit' and hasattr(entity, 'home_burrow') and entity.home_burrow and entity.carried_food >= 5:
+                # Strong attraction to burrow to deposit food
+                current_food_weight = 0.0 # Don't go for food anymore
+                bdx = entity.home_burrow.x - entity.x
+                bdy = entity.home_burrow.y - entity.y
+                bdist = math.hypot(bdx, bdy)
+                if bdist > 0:
+                    fx += (bdx / bdist) * self.weights['burrow'] * 3.0
+
         # 1. Food attraction
         if entity.species in ['rabbit', 'deer'] and current_food_weight > 0:
             # Herbivores seek plants
@@ -151,24 +162,10 @@ class AnimalAI:
         # 2. Water attraction
         water_mult = (entity.max_thirst - entity.thirst) / entity.max_thirst
         thirst_force = 3.0 if water_mult > 0.5 else 1.0
-        if entity.thirst < entity.max_thirst * 0.7:
-            # River pull (vertical)
-            if entity.y < world.river.y:
-                fy += current_water_weight * water_mult * thirst_force
-            elif entity.y > world.river.y + world.river.h:
-                fy -= current_water_weight * water_mult * thirst_force
-            # Waterhole pull
-            for wh in world.water_holes:
-                if not wh.frozen:
-                    dx = wh.x - entity.x
-                    dy = wh.y - entity.y
-                    dist = math.hypot(dx, dy)
-                    if dist < 300 and dist > 0:
-                        fx += (dx / dist) * current_water_weight * water_mult * thirst_force
-                        fy += (dy / dist) * current_water_weight * water_mult * thirst_force
 
         # Water Repulsion if full
-        if entity.thirst > entity.max_thirst * 0.95 and world.in_water(entity.x, entity.y):
+        if entity.thirst >= entity.max_thirst * 0.95 and world.in_water(entity.x, entity.y):
+            current_water_weight = -2.0
             if entity.y >= world.river.y and entity.y <= world.river.y + world.river.h:
                 if entity.y < world.river.y + world.river.h / 2:
                     fy -= 5.0 # Push up out of river
@@ -184,6 +181,22 @@ class AnimalAI:
                             if dist > 0:
                                 fx += (dx / dist) * 5.0
                                 fy += (dy / dist) * 5.0
+
+        if entity.thirst < entity.max_thirst * 0.7:
+            # River pull (vertical)
+            if entity.y < world.river.y:
+                fy += current_water_weight * water_mult * thirst_force
+            elif entity.y > world.river.y + world.river.h:
+                fy -= current_water_weight * water_mult * thirst_force
+            # Waterhole pull
+            for wh in world.water_holes:
+                if not wh.frozen:
+                    dx = wh.x - entity.x
+                    dy = wh.y - entity.y
+                    dist = math.hypot(dx, dy)
+                    if dist < 300 and dist > 0:
+                        fx += (dx / dist) * current_water_weight * water_mult * thirst_force
+                        fy += (dy / dist) * current_water_weight * water_mult * thirst_force
 
         # 3. Predators & Prey & Friends (including Boids)
         boids_neighbors = 0
@@ -254,13 +267,23 @@ class AnimalAI:
                         entity.ai.update_memory(entity.x, entity.y, 5, 'danger') # Negative association
                 elif entity.species == other.species:
                     if entity.species == 'wolf':
-                        # Wolf Flanking (Separation overrides herding)
+                        # Wolf Pack (Herd mentality - Boids) for wolves
+                        if boids_neighbors < 3: # Small pack limit
+                            boids_neighbors += 1
+                            avg_vx += other.vx
+                            avg_vy += other.vy
+                            center_x += other.x
+                            center_y += other.y
+
+                        # Wolf Flanking (Separation)
                         if dist < 100:
                             fx -= (dx / dist) * self.weights['separation']
                             fy -= (dy / dist) * self.weights['separation']
                     else:
                         # Friend/Pack (Herd mentality - Boids) for herbivores
-                        if boids_neighbors < 5:
+                        # Strict herd caps (3 to 4 neighbors)
+                        herd_cap = 4
+                        if boids_neighbors < herd_cap:
                             boids_neighbors += 1
                             avg_vx += other.vx
                             avg_vy += other.vy
@@ -302,16 +325,6 @@ class AnimalAI:
         fx += random.uniform(-0.5, 0.5)
         fy += random.uniform(-0.5, 0.5)
 
-        # Wall repulsion
-        if entity.x < 50:
-            fx += 2.0
-        elif entity.x > config.SCREEN_WIDTH - 50:
-            fx -= 2.0
-        if entity.y < 50:
-            fy += 2.0
-        elif entity.y > config.SCREEN_HEIGHT - 50:
-            fy -= 2.0
-
         # Apply spatial memory bias
         mem_vals = self.get_location_memory(entity.x, entity.y)
         if mem_vals['danger'] > 0: # Danger area
@@ -338,6 +351,23 @@ class AnimalAI:
             if dist_to_hr > 200:
                 fx += (hrx - entity.x) / dist_to_hr * 0.5
                 fy += (hry - entity.y) / dist_to_hr * 0.5
+
+        if entity.species == 'deer':
+            wander_weight = getattr(entity, 'wanderlust_weight', 0.0)
+            if wander_weight > 0:
+                # Use perlin-like noise or persistent random direction for wanderlust
+                if not hasattr(entity, 'wander_dir_x') or random.random() < 0.02:
+                    entity.wander_dir_x = random.uniform(-1, 1)
+                    entity.wander_dir_y = random.uniform(-1, 1)
+
+                # Normalize wander dir
+                wdir_mag = math.hypot(entity.wander_dir_x, entity.wander_dir_y)
+                if wdir_mag > 0:
+                    entity.wander_dir_x /= wdir_mag
+                    entity.wander_dir_y /= wdir_mag
+
+                fx += entity.wander_dir_x * wander_weight
+                fy += entity.wander_dir_y * wander_weight
 
         # Normalize force
         mag = math.hypot(fx, fy)

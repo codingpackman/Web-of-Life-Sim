@@ -25,18 +25,21 @@ class Plant:
 
     def update(self):
         self.age += 1
-        if self.age > config.PLANT_MAX_AGE:
+        if self.age > self.max_age or self.food_count <= 0:
             self.dead = True
 
 class Tree(Plant):
     def __init__(self, x, y):
         super().__init__(x, y, config.TREE_MAX_LEAVES, config.TREE_LEAF_NUTRIENT)
         self.radius = 15
+        self.max_age = config.PLANT_MAX_AGE * random.uniform(0.8, 1.2)
 
 class Bush(Plant):
     def __init__(self, x, y):
         super().__init__(x, y, config.BUSH_MAX_BERRIES, config.BERRY_NUTRIENT)
         self.radius = 20
+        self.max_age = config.PLANT_MAX_AGE * random.uniform(0.8, 1.2)
+        self.berry_offsets = [(int(self.radius * 0.6 * random.uniform(-1, 1)), int(self.radius * 0.6 * random.uniform(-1, 1))) for _ in range(config.BUSH_MAX_BERRIES)]
 
 class WaterHole:
     def __init__(self, x, y, w, h):
@@ -53,6 +56,7 @@ class Burrow:
         self.radius = 8
         self.occupants = []
         self.food_stored = 0
+        self.food_offsets = [(int((self.radius + 5) * random.uniform(-1, 1)), int((self.radius + 5) * random.uniform(-1, 1))) for _ in range(50)]
 
 class River:
     def __init__(self, y, h):
