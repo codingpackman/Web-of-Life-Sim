@@ -56,7 +56,10 @@ class Burrow:
         self.radius = 8
         self.occupants = []
         self.food_stored = 0
-        self.food_offsets = [(int((self.radius + 5) * random.uniform(-1, 1)), int((self.radius + 5) * random.uniform(-1, 1))) for _ in range(50)]
+        self.food_offsets = [
+            (int((self.radius + 5) * random.uniform(-1, 1)), int((self.radius + 5) * random.uniform(-1, 1)))
+            for _ in range(config.BURROW_MAX_FOOD)
+        ]
 
 class River:
     def __init__(self, y, h):

@@ -63,6 +63,20 @@ class AnimalAI:
         key = self.get_grid_key(x, y)
         return self.memory_map.get(key, {'danger': 0.0, 'food': 0.0, 'water': 0.0})
 
+    @staticmethod
+    def _are_deer_family(a, b):
+        a_parents = getattr(a, 'parents', None) or []
+        b_parents = getattr(b, 'parents', None) or []
+        return (
+            b in a_parents
+            or a in b_parents
+            or any(parent in b_parents for parent in a_parents)
+            or getattr(a, 'mate', None) is b
+            or getattr(b, 'mate', None) is a
+            or any(getattr(parent, 'mate', None) is b for parent in a_parents)
+            or any(getattr(parent, 'mate', None) is a for parent in b_parents)
+        )
+
     def calculate_force(self, entity, world, animals):
         fx, fy = 0.0, 0.0
 
@@ -123,7 +137,12 @@ class AnimalAI:
 
         if getattr(entity, 'state', 'FORAGING') == 'HOARDING':
             current_food_weight *= 2.0
-            if entity.species == 'rabbit' and hasattr(entity, 'home_burrow') and entity.home_burrow and entity.carried_food >= 5:
+            if (
+                entity.species == 'rabbit'
+                and getattr(entity, 'home_burrow', None)
+                and entity.carried_food >= 5
+                and entity.home_burrow.food_stored < config.BURROW_MAX_FOOD
+            ):
                 # Strong attraction to burrow to deposit food
                 current_food_weight = 0.0 # Don't go for food anymore
                 bdx = entity.home_burrow.x - entity.x
@@ -131,6 +150,18 @@ class AnimalAI:
                 bdist = math.hypot(bdx, bdy)
                 if bdist > 0:
                     fx += (bdx / bdist) * self.weights['burrow'] * 3.0
+
+        if (
+            entity.species == 'rabbit'
+            and getattr(entity, 'home_burrow', None)
+            and entity.home_burrow.food_stored > 0
+            and entity.hunger < entity.max_hunger
+        ):
+            bdx = entity.home_burrow.x - entity.x
+            bdy = entity.home_burrow.y - entity.y
+            bdist = math.hypot(bdx, bdy)
+            if 0 < bdist < 350:
+                fx += (bdx / bdist) * self.weights['burrow'] * 3.0
 
         # 1. Food attraction
         if entity.species in ['rabbit', 'deer'] and current_food_weight > 0:
@@ -153,8 +184,15 @@ class AnimalAI:
                         min_dist = dist
                         closest_plant = plant
 
-            if closest_plant and min_dist < 300:
+            if closest_plant and 0 < min_dist < 300:
                 mult = max(0, (entity.max_hunger - entity.hunger) / entity.max_hunger)
+                if (
+                    entity.species == 'rabbit'
+                    and getattr(entity, 'home_burrow', None)
+                    and entity.carried_food < 5
+                    and entity.home_burrow.food_stored + entity.carried_food < config.BURROW_MAX_FOOD
+                ):
+                    mult = max(mult, 1.0)
                 hunger_force = 3.0 if mult > 0.5 else 1.0
                 fx += (closest_plant.x - entity.x) / min_dist * current_food_weight * mult * hunger_force
                 fy += (closest_plant.y - entity.y) / min_dist * current_food_weight * mult * hunger_force
@@ -202,6 +240,35 @@ class AnimalAI:
         boids_neighbors = 0
         avg_vx, avg_vy = 0.0, 0.0
         center_x, center_y = 0.0, 0.0
+        if entity.species == 'wolf':
+            social_neighbors = [
+                other for other in animals
+                if other is not entity
+                and not other.dead
+                and other.species == 'wolf'
+                and math.hypot(other.x - entity.x, other.y - entity.y) < 200
+            ][:3]
+        elif entity.species == 'deer':
+            social_neighbors = sorted(
+                (
+                    other for other in animals
+                    if other is not entity
+                    and not other.dead
+                    and other.species == 'deer'
+                    and self._are_deer_family(entity, other)
+                    and math.hypot(other.x - entity.x, other.y - entity.y) < 200
+                ),
+                key=lambda other: math.hypot(other.x - entity.x, other.y - entity.y),
+            )[:2]
+        else:
+            social_neighbors = []
+
+        boids_neighbors = len(social_neighbors)
+        for other in social_neighbors:
+            avg_vx += other.vx
+            avg_vy += other.vy
+            center_x += other.x
+            center_y += other.y
 
         # Wolf Attention Span Logic
         if entity.species == 'wolf':
@@ -239,6 +306,14 @@ class AnimalAI:
             dy = other.y - entity.y
             dist = math.hypot(dx, dy)
 
+            if dist == 0 and other.species == entity.species and entity.species in ['rabbit', 'deer']:
+                separation = self.weights['separation']
+                if entity.species == 'rabbit':
+                    separation *= 1.5
+                angle = random.uniform(0, math.tau)
+                fx += math.cos(angle) * separation
+                fy += math.sin(angle) * separation
+
             if dist < 200 and dist > 0:
                 if entity.species == 'wolf' and other.species in ['rabbit', 'deer']:
                     # Prey - Predictive Pathing (only if it's the chase target or if wandering, ignore)
@@ -266,40 +341,13 @@ class AnimalAI:
                         fy += (dy / dist) * current_predator_weight
                         entity.ai.update_memory(entity.x, entity.y, 5, 'danger') # Negative association
                 elif entity.species == other.species:
-                    if entity.species == 'wolf':
-                        # Wolf Pack (Herd mentality - Boids) for wolves
-                        if boids_neighbors < 3: # Small pack limit
-                            boids_neighbors += 1
-                            avg_vx += other.vx
-                            avg_vy += other.vy
-                            center_x += other.x
-                            center_y += other.y
-
-                        # Wolf Flanking (Separation)
-                        if dist < 100:
-                            fx -= (dx / dist) * self.weights['separation']
-                            fy -= (dy / dist) * self.weights['separation']
-                    else:
-                        # Friend/Pack (Herd mentality - Boids) for herbivores
-                        # Strict herd caps (3 to 4 neighbors)
-                        herd_cap = 4
-                        if boids_neighbors < herd_cap:
-                            boids_neighbors += 1
-                            avg_vx += other.vx
-                            avg_vy += other.vy
-                            center_x += other.x
-                            center_y += other.y
-
-                        if dist < 50:
-                            # Separation
-                            sep_weight = self.weights['separation']
-                            # If adult male deer near baby, drop separation to keep them tight
-                            if entity.species == 'deer' and entity.gender == 'male' and entity.is_adult and not other.is_adult:
-                                sep_weight = 0.0
-
-                            if sep_weight > 0:
-                                fx -= (dx / dist) * sep_weight
-                                fy -= (dy / dist) * sep_weight
+                    separation_range = 100 if entity.species == 'wolf' else 35
+                    if dist < separation_range:
+                        separation = self.weights['separation']
+                        if entity.species == 'rabbit':
+                            separation *= 1.5
+                        fx -= (dx / dist) * separation
+                        fy -= (dy / dist) * separation
 
         if boids_neighbors > 0:
             avg_vx /= boids_neighbors
@@ -310,16 +358,46 @@ class AnimalAI:
             # Alignment
             if math.hypot(avg_vx, avg_vy) > 0:
                 mag = math.hypot(avg_vx, avg_vy)
-                fx += (avg_vx / mag) * self.weights['alignment'] * herd_multiplier
-                fy += (avg_vy / mag) * self.weights['alignment'] * herd_multiplier
+                social_weight = 0.2 if entity.species == 'deer' else 1.0
+                fx += (avg_vx / mag) * self.weights['alignment'] * herd_multiplier * social_weight
+                fy += (avg_vy / mag) * self.weights['alignment'] * herd_multiplier * social_weight
 
             # Cohesion
             cdx = center_x - entity.x
             cdy = center_y - entity.y
             cdist = math.hypot(cdx, cdy)
             if cdist > 0:
-                fx += (cdx / cdist) * self.weights['cohesion'] * herd_multiplier
-                fy += (cdy / cdist) * self.weights['cohesion'] * herd_multiplier
+                social_weight = 0.2 if entity.species == 'deer' else 1.0
+                fx += (cdx / cdist) * self.weights['cohesion'] * herd_multiplier * social_weight
+                fy += (cdy / cdist) * self.weights['cohesion'] * herd_multiplier * social_weight
+
+        if entity.species == 'deer' and entity.state not in ["STARVING", "DEHYDRATED", "FLEEING"]:
+            group_activities = [
+                other for other in animals
+                if other is not entity
+                and not other.dead
+                and other.species == 'deer'
+                and self._are_deer_family(entity, other)
+                and other.activity_timer > 0
+                and other.activity_target is not None
+                and other.current_activity in {"drinking", "eating"}
+                and math.hypot(other.x - entity.x, other.y - entity.y) < 250
+                and (
+                    (other.current_activity == "drinking" and entity.thirst < entity.max_thirst * 0.95)
+                    or (other.current_activity == "eating" and entity.hunger < entity.max_hunger)
+                )
+            ]
+            if group_activities:
+                activity_leader = min(
+                    group_activities,
+                    key=lambda other: math.hypot(other.x - entity.x, other.y - entity.y),
+                )
+                target_x, target_y = activity_leader.activity_target
+                adx, ady = target_x - entity.x, target_y - entity.y
+                adist = math.hypot(adx, ady)
+                if adist > 0:
+                    fx += (adx / adist) * 2.0
+                    fy += (ady / adist) * 2.0
 
         # Add random wander
         fx += random.uniform(-0.5, 0.5)
@@ -340,18 +418,6 @@ class AnimalAI:
                 fx += (dx / dist) * mem_vals['food'] * 0.5
                 fy += (dy / dist) * mem_vals['food'] * 0.5
 
-        # Territory Establishment (Home Ranges)
-        if hunger_ratio > 0.8 and thirst_ratio > 0.8:
-            if getattr(entity, 'home_range', None) is None:
-                entity.home_range = (entity.x, entity.y)
-
-        if getattr(entity, 'home_range', None) is not None:
-            hrx, hry = entity.home_range
-            dist_to_hr = math.hypot(hrx - entity.x, hry - entity.y)
-            if dist_to_hr > 200:
-                fx += (hrx - entity.x) / dist_to_hr * 0.5
-                fy += (hry - entity.y) / dist_to_hr * 0.5
-
         if entity.species == 'deer':
             wander_weight = getattr(entity, 'wanderlust_weight', 0.0)
             if wander_weight > 0:
@@ -368,6 +434,22 @@ class AnimalAI:
 
                 fx += entity.wander_dir_x * wander_weight
                 fy += entity.wander_dir_y * wander_weight
+
+        # Keep animals exploring in a steady direction instead of relying on
+        # tick-to-tick random jitter, which can be canceled by herd forces.
+        entity.roam_timer -= 1
+        if entity.roam_timer <= 0:
+            entity.roam_direction = random.uniform(0, math.tau)
+            entity.roam_timer = random.randint(90, 180)
+
+        roam_weight = 0.8
+        if entity.species in ['rabbit', 'deer'] and hunger_ratio > 0.8 and thirst_ratio > 0.8:
+            roam_weight = 1.5
+        if entity.state in ["STARVING", "DEHYDRATED", "FLEEING"]:
+            roam_weight = 0.25
+
+        fx += math.cos(entity.roam_direction) * roam_weight
+        fy += math.sin(entity.roam_direction) * roam_weight
 
         # Normalize force
         mag = math.hypot(fx, fy)

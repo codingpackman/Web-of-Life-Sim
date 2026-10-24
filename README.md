@@ -6,11 +6,11 @@ A complete visual simulator of herbivores (Rabbits, Deers) and carnivores (Wolve
 - **Dynamic Seasons**: Summer, Fall, Winter, Spring. The background color changes, water holes freeze in winter, and plants reproduce/grow based on the season.
 - **Plants (Trees & Bushes)**:
   - **Trees**: Consumed leaf-by-leaf by deers. Drops seeds in the Fall based on remaining leaves. Seeds grow in Spring.
-  - **Bushes**: Consumed berry-by-berry by rabbits and deers. When eaten, there is a 20% chance an animal drops a seed, which grows into a new bush in the Spring.
+  - **Bushes**: Consumed berry-by-berry by rabbits and deers. When eaten, there is a 10% chance an animal drops a seed, which grows into a new bush in the Spring.
 - **Terrain**: Includes a bisecting river, scattered water holes (which can freeze), and burrows built dynamically by male rabbits.
 - **Animals**:
-  - **Rabbit**: Fast sprinting but low stamina. Eats only berries. Can dig burrows (males) and store food in them. Reproduces during winter inside burrows.
-  - **Deer**: Large, high health, fast. Eats leaves and berries. Reproduces in the fall.
+  - **Rabbit**: Fast sprinting but low stamina. Eats only berries, including stored berries from its own burrow when hungry. Roams for forage, carries berries back to a nearby burrow (up to 20 stored berries), and looks for burrow sites near food and water. Hides in its burrow when predators are near. Reproduces during winter inside burrows.
+  - **Deer**: Large, high health, fast. Eats leaves and berries, roams while full, and increases its urge to explore after staying in an area. Herding is limited to nearby family members; family members can join one another at nearby food and water.
   - **Wolf**: Carnivore. Hunts rabbits and deers. Moderately fast with high stamina. Reproduces in the fall.
 - **Evolution & Machine Learning (Lite)**:
   - When animals reproduce, offspring inherit stats from their parents with slight random mutations, enabling "survival of the fittest".
