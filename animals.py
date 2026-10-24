@@ -5,10 +5,11 @@ from ai import AnimalAI
 from world import Burrow
 
 class Animal:
-    def __init__(self, x, y, species):
+    def __init__(self, x, y, species, parents=None):
         self.x = x
         self.y = y
         self.species = species
+        self.parents = parents
         stats = config.ANIMAL_STATS[species]
 
         self.max_hunger = stats['max_hunger']
@@ -40,7 +41,11 @@ class Animal:
         self.pregnancy_timer = 0
 
         self.dead = False
-        self.ai = AnimalAI(species)
+        self.ai = AnimalAI(species, parents)
+
+        self.vx = 0.0
+        self.vy = 0.0
+        self.state = "FORAGING"
 
     def mutate(self):
         # Evolution: Slight variations in stats from parents
@@ -70,6 +75,20 @@ class Animal:
 
         if self.age > self.lifespan:
             self.die()
+
+        self.ai.decay_memory()
+
+        # Swarm intelligence: share memory with nearby friends
+        for other in animals:
+            if other != self and other.species == self.species and not other.dead:
+                dist = math.hypot(other.x - self.x, other.y - self.y)
+                if dist < 50:
+                    for key, mem in other.ai.memory_map.items():
+                        if key not in self.ai.memory_map:
+                            self.ai.memory_map[key] = {'danger': 0.0, 'food': 0.0, 'water': 0.0}
+                        self.ai.memory_map[key]['danger'] = max(self.ai.memory_map[key]['danger'], mem['danger'])
+                        self.ai.memory_map[key]['food'] = max(self.ai.memory_map[key]['food'], mem['food'])
+                        self.ai.memory_map[key]['water'] = max(self.ai.memory_map[key]['water'], mem['water'])
 
         self.hunger -= self.hunger_loss
         self.thirst -= self.thirst_loss
@@ -101,8 +120,27 @@ class Animal:
 
         # Movement
         fx, fy = self.ai.calculate_force(self, world, animals)
-        self.x += fx * current_speed
-        self.y += fy * current_speed
+        self.vx = fx * current_speed
+        self.vy = fy * current_speed
+        self.x += self.vx
+        self.y += self.vy
+
+        # FSM Update (Predator Check)
+        predator_near = False
+        for other in animals:
+            if other.species == 'wolf' and not other.dead and self.species in ['rabbit', 'deer']:
+                if math.hypot(other.x - self.x, other.y - self.y) < 150:
+                    predator_near = True
+                    break
+
+        if predator_near:
+            self.state = "FLEEING"
+            # Rabbit burrow reinforcement
+            if self.species == 'rabbit' and hasattr(self, 'home_burrow') and self.home_burrow:
+                if math.hypot(self.home_burrow.x - self.x, self.home_burrow.y - self.y) < 10:
+                    self.ai.weights['burrow'] *= 1.05 # Reached burrow, positive reinforcement
+        else:
+            self.state = "FORAGING"
 
         # Bounds checking
         self.x = max(0, min(config.SCREEN_WIDTH, self.x))
@@ -122,8 +160,8 @@ class Animal:
 
 
 class Rabbit(Animal):
-    def __init__(self, x, y):
-        super().__init__(x, y, 'rabbit')
+    def __init__(self, x, y, parents=None):
+        super().__init__(x, y, 'rabbit', parents)
         self.home_burrow = None
         self.carried_food = 0
 
@@ -178,21 +216,30 @@ class Rabbit(Animal):
     def reproduce(self, world, animals):
         # Winter reproduction in burrow
         if world.season == "winter" and self.gender == "female" and self.home_burrow and not self.pregnant:
-            if len(self.home_burrow.occupants) >= 2: # Has a mate
+            # Find a male mate in the burrow
+            male_mate = None
+            for occupant in self.home_burrow.occupants:
+                if occupant.gender == "male" and occupant.is_adult:
+                    male_mate = occupant
+                    break
+
+            if male_mate:
+                self.mate = male_mate
                 self.pregnant = True
 
         if self.pregnant and world.season == "spring":
             self.pregnant = False
             num_kids = random.randint(2, 5)
             for _ in range(num_kids):
-                kid = Rabbit(self.home_burrow.x, self.home_burrow.y)
+                parents = [self, getattr(self, 'mate', None)]
+                kid = Rabbit(self.home_burrow.x, self.home_burrow.y, parents=parents)
                 kid.mutate()
                 kid.home_burrow = self.home_burrow
                 animals.append(kid)
 
 class Deer(Animal):
-    def __init__(self, x, y):
-        super().__init__(x, y, 'deer')
+    def __init__(self, x, y, parents=None):
+        super().__init__(x, y, 'deer', parents)
         self.mate = None
 
     def eat(self, world):
@@ -229,13 +276,13 @@ class Deer(Animal):
 
         if self.pregnant and world.season == "spring":
             self.pregnant = False
-            kid = Deer(self.x, self.y)
+            kid = Deer(self.x, self.y, parents=[self, self.mate])
             kid.mutate()
             animals.append(kid)
 
 class Wolf(Animal):
-    def __init__(self, x, y):
-        super().__init__(x, y, 'wolf')
+    def __init__(self, x, y, parents=None):
+        super().__init__(x, y, 'wolf', parents)
         self.damage = config.ANIMAL_STATS['wolf']['damage']
         self.mate = None
         self.attack_cooldown = 0
@@ -260,7 +307,7 @@ class Wolf(Animal):
 
         if self.pregnant and world.season == "spring":
             self.pregnant = False
-            kid = Wolf(self.x, self.y)
+            kid = Wolf(self.x, self.y, parents=[self, self.mate])
             kid.mutate()
             animals.append(kid)
 
@@ -275,9 +322,10 @@ class Wolf(Animal):
                         if a.health <= 0:
                             a.die()
                             self.hunger = self.max_hunger # Restore hunger upon killing
+                            self.attack_cooldown = 1000 # Stop hunting for a while
 
                             # Negative reinforcement for prey species in this area
-                            a.ai.update_memory(a.x, a.y, -5)
+                            a.ai.update_memory(a.x, a.y, 5, 'danger')
                             # Positive reinforcement for wolf
-                            self.ai.update_memory(self.x, self.y, +5)
+                            self.ai.update_memory(self.x, self.y, 5, 'food')
                         break
