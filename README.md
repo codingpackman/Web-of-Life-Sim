@@ -35,3 +35,5 @@ You can adjust:
 - Screen dimensions and colors.
 - Plant attributes (`TREE_MAX_LEAVES`, `BERRY_NUTRIENT`, etc.).
 - Animal base stats (hunger, speed, stamina, thirst, lifespan, damage) by modifying the `ANIMAL_STATS` dictionary.
+
+`max_hunger` is the animal's full threshold, not a number of ticks. Hunger starts at this value and decreases by `hunger_loss` each simulation tick, so a rabbit with `max_hunger` 100 and `hunger_loss` 0.1 takes about 1,000 ticks to go from full to empty. Eating is available only below the full threshold; the nutrients from a meal can raise hunger above it, after which the animal waits until hunger falls below the threshold before eating again.

@@ -1,8 +1,8 @@
 # config.py
 # Constants and tunable attributes for the simulator
 
-SCREEN_WIDTH = 1200
-SCREEN_HEIGHT = 800
+SCREEN_WIDTH = 1500
+SCREEN_HEIGHT = 1000
 FPS = 60
 
 # Colors
@@ -37,39 +37,39 @@ PLANT_MAX_AGE = 10000
 # Animal Base Attributes
 ANIMAL_STATS = {
     'rabbit': {
-        'max_hunger': 100,
+        'max_hunger': 200,
         'hunger_loss': 0.1,
         'health': 20,
         'speed': 1.5,
         'sprint_speed': 4.0,
         'stamina': 100,
-        'max_thirst': 80,
+        'max_thirst': 160,
         'thirst_loss': 0.05,
         'water_speed': 0.5,
         'lifespan': 10000,
         'radius': 5
     },
     'deer': {
-        'max_hunger': 250,
+        'max_hunger': 500,
         'hunger_loss': 0.3,
         'health': 100,
         'speed': 2.0,
         'sprint_speed': 3.5,
         'stamina': 150,
-        'max_thirst': 150,
+        'max_thirst': 300,
         'thirst_loss': 0.2,
         'water_speed': 1.0,
         'lifespan': 15000,
         'radius': 10
     },
     'wolf': {
-        'max_hunger': 200,
+        'max_hunger': 400,
         'hunger_loss': 0.15,
         'health': 80,
         'speed': 1.8,
         'sprint_speed': 3.7,
         'stamina': 250,
-        'max_thirst': 200,
+        'max_thirst': 400,
         'thirst_loss': 0.1,
         'water_speed': 0.8,
         'lifespan': 12000,

@@ -151,11 +151,16 @@ class Rabbit(Animal):
     def eat(self, world):
         # Rabbits eat bushes
         for bush in world.bushes:
-            if bush.food_count > 0 and math.hypot(self.x - bush.x, self.y - bush.y) < bush.radius + self.radius:
+            can_store_food = self.home_burrow and self.carried_food < 5
+            if (
+                bush.food_count > 0
+                and (self.hunger < self.max_hunger or can_store_food)
+                and math.hypot(self.x - bush.x, self.y - bush.y) < bush.radius + self.radius
+            ):
                 nut = bush.eat()
                 if self.hunger < self.max_hunger:
-                    self.hunger = min(self.max_hunger, self.hunger + nut)
-                elif self.home_burrow and self.carried_food < 5:
+                    self.hunger += nut
+                elif can_store_food:
                     # Carry food
                     self.carried_food += 1
 
@@ -192,11 +197,14 @@ class Deer(Animal):
 
     def eat(self, world):
         # Deer eat bushes and trees
+        if self.hunger >= self.max_hunger:
+            return
+
         eaten = False
         for tree in world.trees:
             if tree.food_count > 0 and math.hypot(self.x - tree.x, self.y - tree.y) < tree.radius + self.radius:
                 nut = tree.eat()
-                self.hunger = min(self.max_hunger, self.hunger + nut)
+                self.hunger += nut
                 eaten = True
                 break
 
@@ -204,7 +212,7 @@ class Deer(Animal):
             for bush in world.bushes:
                 if bush.food_count > 0 and math.hypot(self.x - bush.x, self.y - bush.y) < bush.radius + self.radius:
                     nut = bush.eat()
-                    self.hunger = min(self.max_hunger, self.hunger + nut)
+                    self.hunger += nut
                     if random.random() < 0.2:
                         world.seeds.append(("bush", self.x, self.y))
                     break

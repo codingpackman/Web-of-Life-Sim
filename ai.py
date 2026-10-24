@@ -60,7 +60,7 @@ class AnimalAI:
                         closest_plant = plant
 
             if closest_plant and min_dist < 300:
-                mult = (entity.max_hunger - entity.hunger) / entity.max_hunger # more hungry = more pull
+                mult = max(0, (entity.max_hunger - entity.hunger) / entity.max_hunger)
                 fx += (closest_plant.x - entity.x) / min_dist * self.weights['food'] * mult
                 fy += (closest_plant.y - entity.y) / min_dist * self.weights['food'] * mult
 

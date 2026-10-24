@@ -19,7 +19,7 @@ class Simulator:
 
         self.world = World()
         self.animals = []
-        self._init_animals(15, 8, 4) # 15 rabbits, 8 deer, 4 wolves
+        self._init_animals(50, 20, 5) # 50 rabbits, 20 deer, 5 wolves
 
         self.running = True
         self.headless = headless
