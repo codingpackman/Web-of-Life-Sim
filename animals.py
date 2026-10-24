@@ -74,7 +74,8 @@ class Animal:
             age_factor = 0.5 # Slow down when old
 
         if self.age > self.lifespan:
-            self.die()
+            self.die("age")
+            return
 
         self.ai.decay_memory()
 
@@ -97,7 +98,14 @@ class Animal:
             self.health -= 0.1
 
         if self.health <= 0:
-            self.die()
+            if self.hunger <= 0 and self.thirst <= 0:
+                cause = "hunger and thirst"
+            elif self.hunger <= 0:
+                cause = "hunger"
+            else:
+                cause = "thirst"
+            self.die(cause)
+            return
 
         # Health penalty speed
         health_factor = max(0.3, self.health / self.max_health)
@@ -149,8 +157,12 @@ class Animal:
         self.eat(world)
         self.reproduce(world, animals)
 
-    def die(self):
+    def die(self, cause):
+        if self.dead:
+            return
+
         self.dead = True
+        print(f"{self.species} died to {cause}")
 
     def eat(self, world):
         pass # overridden by subclasses
@@ -203,7 +215,7 @@ class Rabbit(Animal):
                     self.carried_food += 1
 
                 # Seed dropping (20% chance)
-                if random.random() < 0.2:
+                if random.random() < config.BUSH_SEED_DROP_CHANCE:
                     world.seeds.append(("bush", self.x, self.y))
                 break
 
@@ -260,7 +272,7 @@ class Deer(Animal):
                 if bush.food_count > 0 and math.hypot(self.x - bush.x, self.y - bush.y) < bush.radius + self.radius:
                     nut = bush.eat()
                     self.hunger += nut
-                    if random.random() < 0.2:
+                    if random.random() < config.BUSH_SEED_DROP_CHANCE:
                         world.seeds.append(("bush", self.x, self.y))
                     break
 
@@ -320,7 +332,7 @@ class Wolf(Animal):
                         self.attack_cooldown = 30 # 0.5 sec cooldown
 
                         if a.health <= 0:
-                            a.die()
+                            a.die("wolf")
                             self.hunger = self.max_hunger # Restore hunger upon killing
                             self.attack_cooldown = 1000 # Stop hunting for a while
 

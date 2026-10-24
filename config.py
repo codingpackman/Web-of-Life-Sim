@@ -1,8 +1,8 @@
 # config.py
 # Constants and tunable attributes for the simulator
 
-SCREEN_WIDTH = 1500
-SCREEN_HEIGHT = 1000
+SCREEN_WIDTH = 1450
+SCREEN_HEIGHT = 850
 FPS = 60
 
 # Colors
@@ -29,15 +29,17 @@ SEASON_LENGTH = 60 * 30 # 30 seconds per season
 
 # Plant Attributes
 TREE_MAX_LEAVES = 50
-TREE_LEAF_NUTRIENT = 10
+TREE_LEAF_NUTRIENT = 20
+TREE_SEED_LEAF_INTERVAL = 20
 BUSH_MAX_BERRIES = 20
-BERRY_NUTRIENT = 25
+BERRY_NUTRIENT = 50
+BUSH_SEED_DROP_CHANCE = 0.1
 PLANT_MAX_AGE = 10000
 
 # Animal Base Attributes
 ANIMAL_STATS = {
     'rabbit': {
-        'max_hunger': 200,
+        'max_hunger': 300,
         'hunger_loss': 0.1,
         'health': 20,
         'speed': 1.5,
@@ -50,7 +52,7 @@ ANIMAL_STATS = {
         'radius': 5
     },
     'deer': {
-        'max_hunger': 500,
+        'max_hunger': 600,
         'hunger_loss': 0.3,
         'health': 100,
         'speed': 2.0,

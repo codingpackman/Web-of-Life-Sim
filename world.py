@@ -73,7 +73,7 @@ class World:
 
         self.seeds = []
 
-        self._init_plants(20, 15)
+        self._init_plants(30, 30)
         self._init_water_holes(5)
 
     def _init_plants(self, num_trees, num_bushes):
@@ -126,10 +126,10 @@ class World:
         if self.season == "fall":
             # Trees plant seeds based on remaining leaves
             for tree in self.trees:
-                num_seeds = tree.food_count // 10
+                num_seeds = tree.food_count // config.TREE_SEED_LEAF_INTERVAL
                 for _ in range(num_seeds):
-                    ox = random.randint(-40, 40)
-                    oy = random.randint(-40, 40)
+                    ox = random.randint(-60, 60)
+                    oy = random.randint(-60, 60)
                     self.seeds.append(("tree", tree.x + ox, tree.y + oy))
 
         elif self.season == "winter":
