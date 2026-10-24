@@ -31,7 +31,7 @@ class Animal:
         self.thirst_loss = stats['thirst_loss']
         self.water_speed = stats['water_speed']
 
-        self.lifespan = stats['lifespan']
+        self.lifespan = stats['lifespan'] * random.uniform(0.8, 1.2)
         self.age = 0
         self.radius = stats['radius']
 
@@ -139,6 +139,9 @@ class Animal:
         self.x += self.vx
         self.y += self.vy
 
+        self.x = max(self.radius, min(config.SCREEN_WIDTH - self.radius, self.x))
+        self.y = max(self.radius, min(config.SCREEN_HEIGHT - self.radius, self.y))
+
         # FSM Update (Predator Check)
         predator_near = False
         for other in animals:
@@ -161,10 +164,6 @@ class Animal:
         else:
             if self.state not in ["STARVING", "DEHYDRATED", "AGGRESSIVE"]:
                 self.state = "FORAGING"
-
-        # Bounds checking
-        self.x = max(0, min(config.SCREEN_WIDTH, self.x))
-        self.y = max(0, min(config.SCREEN_HEIGHT, self.y))
 
         self.eat(world)
         self.reproduce(world, animals)
@@ -190,17 +189,52 @@ class Rabbit(Animal):
         self.carried_food = 0
 
     def update(self, world, animals):
+        if not self.is_adult and world.season == "spring" and getattr(self, "home_burrow", None):
+            self.thirst = self.max_thirst # Baby rabbits don't need to drink until summer
+            # Keep them locked to the burrow radius
+            if math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) > self.home_burrow.radius * 2:
+                self.x = self.home_burrow.x + random.uniform(-self.home_burrow.radius, self.home_burrow.radius)
+                self.y = self.home_burrow.y + random.uniform(-self.home_burrow.radius, self.home_burrow.radius)
+
         super().update(world, animals)
         if self.dead: return
 
-        if self.state == "FLEEING" and self.home_burrow and math.hypot(self.home_burrow.x - self.x, self.home_burrow.y - self.y) < 10:
-            self.is_hidden = True
+        if self.hunger >= self.max_hunger and self.state != "FLEEING":
+            self.state = "HOARDING"
+
+        if world.season == "winter" and self.home_burrow:
+            if self.home_burrow.food_stored > 0 and self.state != "FLEEING":
+                self.is_hidden = True
+
+                # Keep them locked to the burrow radius while hidden in winter
+                if math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) > self.home_burrow.radius * 2:
+                    self.x = self.home_burrow.x + random.uniform(-self.home_burrow.radius, self.home_burrow.radius)
+                    self.y = self.home_burrow.y + random.uniform(-self.home_burrow.radius, self.home_burrow.radius)
+
+                if self.hunger < self.max_hunger * 0.5:
+                    self.home_burrow.food_stored -= 1
+                    self.hunger += config.BERRY_NUTRIENT
+            elif self.home_burrow.food_stored <= 0:
+                self.is_hidden = False
         else:
-            self.is_hidden = False
+            if self.state == "FLEEING" and self.home_burrow and math.hypot(self.home_burrow.x - self.x, self.home_burrow.y - self.y) < 20:
+                self.is_hidden = True
+            elif self.state == "HOARDING" and self.home_burrow and math.hypot(self.home_burrow.x - self.x, self.home_burrow.y - self.y) < 20:
+                self.is_hidden = True
+            else:
+                self.is_hidden = False
+
+        # Deposit food in burrow during update phase to ensure it's captured
+        if self.home_burrow and self.carried_food > 0:
+            if math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) < 20:
+                self.home_burrow.food_stored += self.carried_food
+                self.carried_food = 0
+                if self.hunger < self.max_hunger:
+                    self.state = "FORAGING"
 
         # Dig burrow if male adult and no home
         if self.gender == "male" and self.is_adult and not self.home_burrow:
-            if random.random() < 0.01: # Small chance per tick
+            if random.random() < 0.01 and not world.in_water(self.x, self.y): # Small chance per tick
                 b = Burrow(self.x, self.y)
                 world.burrows.append(b)
                 self.home_burrow = b
@@ -223,6 +257,7 @@ class Rabbit(Animal):
                 bush.food_count > 0
                 and (self.hunger < self.max_hunger or can_store_food)
                 and math.hypot(self.x - bush.x, self.y - bush.y) < bush.radius + self.radius
+                and not self.is_hidden
             ):
                 nut = bush.eat()
                 if self.hunger < self.max_hunger:
@@ -235,12 +270,6 @@ class Rabbit(Animal):
                 if random.random() < config.BUSH_SEED_DROP_CHANCE:
                     world.seeds.append(("bush", self.x, self.y))
                 break
-
-        # Deposit food in burrow
-        if self.home_burrow and self.carried_food > 0:
-            if math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) < 10:
-                self.home_burrow.food_stored += self.carried_food
-                self.carried_food = 0
 
     def reproduce(self, world, animals):
         # Winter reproduction in burrow
@@ -270,6 +299,30 @@ class Deer(Animal):
     def __init__(self, x, y, parents=None):
         super().__init__(x, y, 'deer', parents)
         self.mate = None
+        self.boredom = 0
+        self.wanderlust_weight = 0.0
+        self.last_grid_x = -1
+        self.last_grid_y = -1
+
+    def update(self, world, animals):
+        super().update(world, animals)
+
+        grid_size = 200
+        grid_x = int(self.x // grid_size)
+        grid_y = int(self.y // grid_size)
+
+        if grid_x == self.last_grid_x and grid_y == self.last_grid_y:
+            if self.hunger > self.max_hunger * 0.7 and self.thirst > self.max_thirst * 0.7:
+                self.boredom += 1
+        else:
+            self.boredom = 0
+            self.wanderlust_weight = 0.0
+
+        self.last_grid_x = grid_x
+        self.last_grid_y = grid_y
+
+        if self.boredom > 600: # 10 seconds of being full in one spot
+            self.wanderlust_weight = min(2.0, self.wanderlust_weight + 0.01)
 
     def eat(self, world):
         # Deer eat bushes and trees

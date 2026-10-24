@@ -67,15 +67,20 @@ class Simulator:
         # Draw Burrows
         for b in self.world.burrows:
             pygame.draw.circle(self.screen, config.C_BURROW, (int(b.x), int(b.y)), b.radius)
+            # Draw tiny purple circles for stored food
+            for i in range(b.food_stored):
+                if i < len(b.food_offsets):
+                    ox, oy = b.food_offsets[i]
+                    pygame.draw.circle(self.screen, config.C_BERRY, (int(b.x + ox), int(b.y + oy)), 2)
 
         # Draw Bushes & Berries
         for bush in self.world.bushes:
             pygame.draw.circle(self.screen, config.C_BUSH, (int(bush.x), int(bush.y)), bush.radius)
             # Draw berries based on count
             for i in range(bush.food_count):
-                ox = int(bush.radius * 0.6 * random.uniform(-1, 1)) # static render is tricky without storing offsets, using simple approximation
-                oy = int(bush.radius * 0.6 * random.uniform(-1, 1))
-                pygame.draw.circle(self.screen, config.C_BERRY, (int(bush.x + ox), int(bush.y + oy)), 2)
+                if i < len(bush.berry_offsets):
+                    ox, oy = bush.berry_offsets[i]
+                    pygame.draw.circle(self.screen, config.C_BERRY, (int(bush.x + ox), int(bush.y + oy)), 2)
 
         # Draw Trees
         for tree in self.world.trees:
@@ -83,12 +88,16 @@ class Simulator:
 
         # Draw Animals
         for a in self.animals:
-            if getattr(a, 'is_hidden', False):
-                continue
-
             color = config.C_RABBIT
             if a.species == 'deer': color = config.C_DEER
             elif a.species == 'wolf': color = config.C_WOLF
+
+            if getattr(a, 'is_hidden', False):
+                if a.species == 'rabbit':
+                    # Darken the color to indicate underground
+                    color = (max(0, color[0] - 80), max(0, color[1] - 80), max(0, color[2] - 80))
+                else:
+                    continue
 
             # draw baby indicator
             radius = a.radius if a.is_adult else a.radius * 0.6
