@@ -84,6 +84,7 @@ class Animal:
         self.activity_target = None
         self.activity_timer = 0
         self.feeding_cooldown = 0
+        self.memory_share_timer = random.randint(0, 60)
 
     def mutate(self):
         # Evolution: Slight variations in stats from parents
@@ -126,17 +127,21 @@ class Animal:
             self.feeding_cooldown -= 1
 
         # Swarm intelligence: share memory with nearby friends
-        nearby = world.spatial_hash.get_nearby(self.x, self.y) if hasattr(world, 'spatial_hash') else animals
-        for other in nearby:
-            if getattr(other, 'species', None) == self.species and other != self and not getattr(other, 'dead', True):
-                if (other.x - self.x)**2 + (other.y - self.y)**2 < 2500:
-                    for key, mem in other.ai.memory_map.items():
-                        if key not in self.ai.memory_map:
-                            self.ai.memory_map[key] = {'danger_day': 0.0, 'danger_night': 0.0, 'food': 0.0, 'water': 0.0}
-                        self.ai.memory_map[key]['danger_day'] = max(self.ai.memory_map[key]['danger_day'], mem['danger_day'])
-                        self.ai.memory_map[key]['danger_night'] = max(self.ai.memory_map[key]['danger_night'], mem['danger_night'])
-                        self.ai.memory_map[key]['food'] = max(self.ai.memory_map[key]['food'], mem['food'])
-                        self.ai.memory_map[key]['water'] = max(self.ai.memory_map[key]['water'], mem['water'])
+        self.memory_share_timer -= 1
+        if self.memory_share_timer <= 0:
+            if getattr(self, 'is_adult', False):
+                nearby = world.spatial_hash.get_nearby(self.x, self.y) if hasattr(world, 'spatial_hash') else animals
+                for other in nearby:
+                    if getattr(other, 'species', None) == self.species and other != self and not getattr(other, 'dead', True):
+                        if (other.x - self.x)**2 + (other.y - self.y)**2 < 2500:
+                            for key, mem in other.ai.memory_map.items():
+                                if key not in self.ai.memory_map:
+                                    self.ai.memory_map[key] = {'danger_day': 0.0, 'danger_night': 0.0, 'food': 0.0, 'water': 0.0}
+                                self.ai.memory_map[key]['danger_day'] = max(self.ai.memory_map[key]['danger_day'], mem['danger_day'])
+                                self.ai.memory_map[key]['danger_night'] = max(self.ai.memory_map[key]['danger_night'], mem['danger_night'])
+                                self.ai.memory_map[key]['food'] = max(self.ai.memory_map[key]['food'], mem['food'])
+                                self.ai.memory_map[key]['water'] = max(self.ai.memory_map[key]['water'], mem['water'])
+            self.memory_share_timer = 60
 
         if getattr(self, 'is_hidden', False):
             self.hunger -= self.hunger_loss * 0.2
@@ -274,6 +279,12 @@ class Rabbit(Animal):
         super().update(world, animals)
         if self.dead: return
 
+        if self.is_adult and self.home_burrow:
+            if self.home_burrow.owner_male != self and self.home_burrow.owner_female != self:
+                if self in self.home_burrow.occupants:
+                    self.home_burrow.occupants.remove(self)
+                self.home_burrow = None
+
         if self.hunger >= self.max_hunger and self.state != "FLEEING":
             self.state = "HOARDING"
 
@@ -306,15 +317,16 @@ class Rabbit(Animal):
                 b = Burrow(self.x, self.y)
                 world.burrows.append(b)
                 self.home_burrow = b
+                b.owner_male = self
                 b.occupants.append(self)
 
         # Find burrow if female
         if self.gender == "female" and self.is_adult and not self.home_burrow:
             for b in world.burrows:
-                adult_occupants = sum(1 for o in b.occupants if o.is_adult and not o.dead)
-                if adult_occupants < 2 and any(o.gender == "male" for o in b.occupants):
+                if b.owner_female is None and b.owner_male is not None and not b.owner_male.dead:
                     if math.hypot(self.x - b.x, self.y - b.y) < 50:
                         self.home_burrow = b
+                        b.owner_female = self
                         b.occupants.append(self)
                         break
 
@@ -617,7 +629,9 @@ class Fish(Animal):
         if world.season == "spring":
             if self.gender == "female" and self.is_adult and not self.pregnant:
                 if random.random() < 0.05:
-                    world.eggs.append(world_mod.Egg(self.x, self.y, 'fish', [self]))
+                    num_eggs = random.randint(2, 4)
+                    for _ in range(num_eggs):
+                        world.eggs.append(world_mod.Egg(self.x, self.y, 'fish', [self]))
                     self.pregnant = True
             elif self.gender == "male" and self.is_adult:
                 for egg in world.eggs:
@@ -632,6 +646,7 @@ class Snake(Animal):
         self.damage = config.ANIMAL_STATS['snake']['damage']
         self.attack_cooldown = 0
         self.climbing_tree = None
+        self.tree_camp_timer = 0
 
     def update(self, world, animals):
         if self.attack_cooldown > 0:
@@ -641,11 +656,15 @@ class Snake(Animal):
             self.climbing_tree = None
 
         if self.climbing_tree:
-            self.x = self.climbing_tree.x
-            self.y = self.climbing_tree.y
-            self.vx = 0
-            self.vy = 0
-            # Wait for prey or eggs
+            self.tree_camp_timer -= 1
+            if self.tree_camp_timer <= 0:
+                self.climbing_tree = None
+            else:
+                self.x = self.climbing_tree.x
+                self.y = self.climbing_tree.y
+                self.vx = 0
+                self.vy = 0
+                # Wait for prey or eggs
 
         super().update(world, animals)
 
@@ -659,6 +678,7 @@ class Snake(Animal):
                     if (self.x - plant.x)**2 + (self.y - plant.y)**2 < (plant.radius + self.radius)**2:
                         if random.random() < 0.05:
                             self.climbing_tree = plant
+                            self.tree_camp_timer = 600
                         break
 
     def eat(self, world):
@@ -721,9 +741,9 @@ class Snake(Animal):
                         break
 
 class Sparrow(Animal):
-    def __init__(self, x, y, parents=None):
+    def __init__(self, x, y, parents=None, start_flying=True):
         super().__init__(x, y, 'sparrow', parents)
-        self.flying = True
+        self.flying = start_flying
         self.in_tree = None
         self.home_nest = None
         self.flight_timer = 0
@@ -733,6 +753,11 @@ class Sparrow(Animal):
         self.landing_cooldown = 0
         self.perch_position = None
         self.nest_search_timer = random.randint(300, 600)
+
+        if parents and getattr(parents[0], 'home_nest', None):
+            self.flying = False
+            self.in_tree = parents[0].home_nest.tree
+            self.x, self.y = self.in_tree.x, self.in_tree.y
 
     def _nearest_tree(self, world):
         trees = [
@@ -975,15 +1000,17 @@ class Sparrow(Animal):
             and world.season == "spring"
             and not self.pregnant
         ):
-            world.eggs.append(
-                world_mod.Egg(self.x, self.y, 'sparrow', self.home_nest.occupants.copy())
-            )
+            num_eggs = random.randint(2, 4)
+            for _ in range(num_eggs):
+                world.eggs.append(
+                    world_mod.Egg(self.x, self.y, 'sparrow', self.home_nest.occupants.copy())
+                )
             self.pregnant = True
 
 class Hawk(Animal):
-    def __init__(self, x, y, parents=None):
+    def __init__(self, x, y, parents=None, start_flying=True):
         super().__init__(x, y, 'hawk', parents)
-        self.flying = True
+        self.flying = start_flying
         self.in_tree = None
         self.home_nest = None
         self.dive_target = None
@@ -998,6 +1025,11 @@ class Hawk(Animal):
         self.perch_position = None
         self.damage = config.ANIMAL_STATS['hawk']['damage']
         self.attack_cooldown = 0
+
+        if parents and getattr(parents[0], 'home_nest', None):
+            self.flying = False
+            self.in_tree = parents[0].home_nest.tree
+            self.x, self.y = self.in_tree.x, self.in_tree.y
 
     def _nearest_tree(self, world):
         return min(
@@ -1272,6 +1304,8 @@ class Hawk(Animal):
                         if nest.tree == self.in_tree and len(nest.occupants) == 1 and nest.occupants[0].gender == 'male':
                             self.home_nest = nest
                             nest.occupants.append(self)
-                            world.eggs.append(world_mod.Egg(self.x, self.y, 'hawk', nest.occupants.copy()))
+                            num_eggs = random.randint(1, 2)
+                            for _ in range(num_eggs):
+                                world.eggs.append(world_mod.Egg(self.x, self.y, 'hawk', nest.occupants.copy()))
                             self.pregnant = True
                             break

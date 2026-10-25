@@ -2,6 +2,7 @@ import pygame
 import sys
 import os
 import random
+import math
 import config
 from world import World
 from animals import Rabbit, Deer, Wolf, Fish, Snake, Sparrow, Hawk
@@ -157,6 +158,26 @@ class Simulator:
                 (int(nest.x + 7), int(nest.y - 7)),
                 2,
             )
+
+        # Draw Eggs
+        egg_offsets = {}
+        for egg in self.world.eggs:
+            key = (int(egg.x), int(egg.y))
+            if key not in egg_offsets:
+                egg_offsets[key] = 0
+            offset = egg_offsets[key]
+
+            # Simple circular pattern for offsets if multiple eggs share coordinates
+            ox = int(math.cos(offset * math.pi/2) * (offset*2)) if offset > 0 else 0
+            oy = int(math.sin(offset * math.pi/2) * (offset*2)) if offset > 0 else 0
+            egg_offsets[key] += 1
+
+            if egg.species == 'fish':
+                pygame.draw.circle(self.screen, (255, 165, 0), (int(egg.x) + ox, int(egg.y) + oy), 2)
+            elif egg.species in ['sparrow', 'hawk']:
+                pygame.draw.circle(self.screen, (200, 220, 255), (int(egg.x) + ox, int(egg.y) - 9 + oy), 2)
+            elif egg.species == 'snake':
+                pygame.draw.circle(self.screen, (200, 200, 200), (int(egg.x) + ox, int(egg.y) + oy), 2)
 
         # Draw Animals
         for a in self.animals:

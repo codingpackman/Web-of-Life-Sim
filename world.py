@@ -91,6 +91,8 @@ class Burrow:
         self.x = x
         self.y = y
         self.radius = 8
+        self.owner_male = None
+        self.owner_female = None
         self.occupants = []
         self.food_stored = 0
         self.food_offsets = [
@@ -99,10 +101,10 @@ class Burrow:
         ]
 
     def get_male(self):
-        return next((o for o in self.occupants if getattr(o, 'gender', None) == 'male' and getattr(o, 'is_adult', False) and not getattr(o, 'dead', True)), None)
+        return self.owner_male if self.owner_male and not getattr(self.owner_male, 'dead', True) else None
 
     def get_female(self):
-        return next((o for o in self.occupants if getattr(o, 'gender', None) == 'female' and getattr(o, 'is_adult', False) and not getattr(o, 'dead', True)), None)
+        return self.owner_female if self.owner_female and not getattr(self.owner_female, 'dead', True) else None
 
     def add_occupant(self, occupant):
         self.occupants.append(occupant)
@@ -132,6 +134,7 @@ class Carcass:
             self.dead = True
 
     def eat(self, amount):
+        if self.nutrients <= 0: return 0
         eaten = min(amount, self.nutrients)
         self.nutrients -= eaten
         if self.nutrients <= 0:
@@ -258,10 +261,14 @@ class World:
                 self.hatched_animals.append(baby)
 
 
-        self.nests = [n for n in self.nests if not n.tree.dead]
         self.trees = [t for t in self.trees if not t.dead]
         self.carcasses = [c for c in self.carcasses if not c.dead]
         self.bushes = [b for b in self.bushes if not b.dead]
+        self.nests = [n for n in self.nests if not n.tree.dead]
+
+        # Cleanup ghost eggs in trees that died
+        valid_nest_coords = set((n.x, n.y) for n in self.nests)
+        self.eggs = [e for e in self.eggs if e.species not in ['sparrow', 'hawk'] or (e.x, e.y) in valid_nest_coords]
 
     def _advance_season(self):
         seasons = ["summer", "fall", "winter", "spring"]
