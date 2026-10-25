@@ -3,6 +3,36 @@ import random
 import config
 from math import sqrt
 
+
+class SpatialHash:
+    def __init__(self, cell_size=150):
+        self.cell_size = cell_size
+        self.grid = {}
+
+    def _get_cell_coords(self, x, y):
+        return int(x // self.cell_size), int(y // self.cell_size)
+
+    def insert(self, entity):
+        if not hasattr(entity, 'x') or not hasattr(entity, 'y'):
+            return
+        cell = self._get_cell_coords(entity.x, entity.y)
+        if cell not in self.grid:
+            self.grid[cell] = []
+        self.grid[cell].append(entity)
+
+    def clear(self):
+        self.grid.clear()
+
+    def get_nearby(self, x, y):
+        cell_x, cell_y = self._get_cell_coords(x, y)
+        nearby_entities = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                cell = (cell_x + dx, cell_y + dy)
+                if cell in self.grid:
+                    nearby_entities.extend(self.grid[cell])
+        return nearby_entities
+
 class Plant:
     def __init__(self, x, y, max_food, nutrient):
         self.x = x
@@ -23,16 +53,23 @@ class Plant:
             return self.nutrient
         return 0
 
-    def update(self):
+    def update(self, world):
         self.age += 1
-        if self.age > self.max_age or self.food_count <= 0:
+        if self.age > self.max_age:
             self.dead = True
+
+
 
 class Tree(Plant):
     def __init__(self, x, y):
         super().__init__(x, y, config.TREE_MAX_LEAVES, config.TREE_LEAF_NUTRIENT)
         self.radius = 15
         self.max_age = config.PLANT_MAX_AGE * random.uniform(0.8, 1.2)
+
+    def update(self, world):
+        super().update(world)
+        if self.food_count <= 0 and world.season == "spring":
+            self.dead = True
 
 class Bush(Plant):
     def __init__(self, x, y):
@@ -61,6 +98,67 @@ class Burrow:
             for _ in range(config.BURROW_MAX_FOOD)
         ]
 
+    def get_male(self):
+        return next((o for o in self.occupants if getattr(o, 'gender', None) == 'male' and getattr(o, 'is_adult', False) and not getattr(o, 'dead', True)), None)
+
+    def get_female(self):
+        return next((o for o in self.occupants if getattr(o, 'gender', None) == 'female' and getattr(o, 'is_adult', False) and not getattr(o, 'dead', True)), None)
+
+    def add_occupant(self, occupant):
+        self.occupants.append(occupant)
+
+    def remove_occupant(self, occupant):
+        if occupant in self.occupants:
+            self.occupants.remove(occupant)
+
+
+class Carcass:
+    def __init__(self, x, y, species):
+        self.x = x
+        self.y = y
+        self.species = species
+        if species == 'deer':
+            self.nutrients, self.radius = 300, 12
+        elif species == 'wolf':
+            self.nutrients, self.radius = 150, 8
+        else:
+            self.nutrients, self.radius = 50, 5
+        self.max_nutrients = self.nutrients
+        self.dead = False
+
+    def update(self):
+        self.nutrients -= 0.05
+        if self.nutrients <= 0:
+            self.dead = True
+
+    def eat(self, amount):
+        eaten = min(amount, self.nutrients)
+        self.nutrients -= eaten
+        if self.nutrients <= 0:
+            self.dead = True
+        return eaten
+
+class Nest:
+    def __init__(self, tree):
+        self.tree = tree
+        self.x = tree.x
+        self.y = tree.y
+        self.occupants = []
+
+class Egg:
+    def __init__(self, x, y, species, parents):
+        self.x = x
+        self.y = y
+        self.species = species
+        self.parents = parents
+        self.hatch_timer = config.SEASON_LENGTH
+        self.dead = False
+
+    def update(self):
+        self.hatch_timer -= 1
+        if self.hatch_timer <= 0:
+            self.dead = True
+
 class River:
     def __init__(self, y, h):
         self.x = 0
@@ -76,11 +174,14 @@ class World:
         self.bushes = []
         self.water_holes = []
         self.burrows = []
+        self.carcasses = []
+        self.nests = []
+        self.eggs = []
         self.river = River(config.SCREEN_HEIGHT // 2 - 25, 50)
 
         self.seeds = []
 
-        self._init_plants(30, 30)
+        self._init_plants(30, 40)
         self._init_water_holes(5)
 
     def _init_plants(self, num_trees, num_bushes):
@@ -118,11 +219,34 @@ class World:
 
         # Update plants
         for tree in self.trees:
-            tree.update()
+            tree.update(self)
         for bush in self.bushes:
-            bush.update()
+            bush.update(self)
+        for carcass in self.carcasses:
+            carcass.update()
+        for egg in self.eggs:
+            egg.update()
+            if egg.dead and len(egg.parents) == 2:
+                import animals
+                if egg.species == 'fish':
+                    baby = animals.Fish(egg.x, egg.y, parents=egg.parents)
+                elif egg.species == 'snake':
+                    baby = animals.Snake(egg.x, egg.y, parents=egg.parents)
+                elif egg.species == 'sparrow':
+                    baby = animals.Sparrow(egg.x, egg.y, parents=egg.parents)
+                elif egg.species == 'hawk':
+                    baby = animals.Hawk(egg.x, egg.y, parents=egg.parents)
+                else:
+                    continue
+                baby.mutate()
+                if not hasattr(self, 'hatched_animals'):
+                    self.hatched_animals = []
+                self.hatched_animals.append(baby)
 
+
+        self.nests = [n for n in self.nests if not n.tree.dead]
         self.trees = [t for t in self.trees if not t.dead]
+        self.carcasses = [c for c in self.carcasses if not c.dead]
         self.bushes = [b for b in self.bushes if not b.dead]
 
     def _advance_season(self):

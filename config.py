@@ -25,7 +25,8 @@ C_DEER = (160, 82, 45)           # Sienna
 C_WOLF = (105, 105, 105)         # Dim Gray
 
 # Season lengths in ticks (assuming 60 ticks per second)
-SEASON_LENGTH = 60 * 30 # 30 seconds per season
+SEASON_LENGTH = 3600
+DAY_LENGTH = 1800
 
 # Plant Attributes
 TREE_MAX_LEAVES = 50
@@ -35,48 +36,107 @@ BUSH_MAX_BERRIES = 20
 BERRY_NUTRIENT = 50
 BUSH_SEED_DROP_CHANCE = 0.1
 BURROW_MAX_FOOD = 20
-PLANT_MAX_AGE = 10000
+PLANT_MAX_AGE = 20000
 
 # Animal Base Attributes
 ANIMAL_STATS = {
     'rabbit': {
         'max_hunger': 300,
-        'hunger_loss': 0.05,
+        'hunger_loss': 0.0125,
         'health': 20,
-        'speed': 1.5,
-        'sprint_speed': 4.0,
+        'speed': 0.75,
+        'sprint_speed': 2.0,
         'stamina': 50,
         'max_thirst': 300,
-        'thirst_loss': 0.05,
-        'water_speed': 0.5,
-        'lifespan': 10000,
+        'thirst_loss': 0.025,
+        'water_speed': 0.25,
+        'lifespan': 20000,
         'radius': 5
     },
     'deer': {
         'max_hunger': 600,
-        'hunger_loss': 0.15,
+        'hunger_loss': 0.075,
         'health': 100,
-        'speed': 2.0,
-        'sprint_speed': 3.5,
+        'speed': 1.0,
+        'sprint_speed': 1.75,
         'stamina': 100,
         'max_thirst': 300,
-        'thirst_loss': 0.1,
+        'thirst_loss': 0.025,
         'water_speed': 1.0,
-        'lifespan': 15000,
+        'lifespan': 30000,
         'radius': 10
     },
     'wolf': {
         'max_hunger': 500,
-        'hunger_loss': 0.025,
+        'hunger_loss': 0.0125,
         'health': 80,
-        'speed': 1.6,
-        'sprint_speed': 3.25,
+        'speed': 0.8,
+        'sprint_speed': 1.625,
         'stamina': 200,
         'max_thirst': 400,
-        'thirst_loss': 0.05,
-        'water_speed': 0.8,
-        'lifespan': 12000,
+        'thirst_loss': 0.025,
+        'water_speed': 0.4,
+        'lifespan': 24000,
         'radius': 8,
         'damage': 25
+        },
+    'fish': {
+        'max_hunger': 100,
+        'hunger_loss': 0,
+        'health': 10,
+        'speed': 0.4,
+        'sprint_speed': 3.0,
+        'stamina': 30,
+        'max_thirst': 100,
+        'thirst_loss': 0,
+        'water_speed': 0.4,
+        'lifespan': 10000,
+        'radius': 4
+    },
+    'snake': {
+        'max_hunger': 150,
+        'hunger_loss': 0.005,
+        'health': 30,
+        'speed': 0.4,
+        'sprint_speed': 1.0,
+        'stamina': 40,
+        'max_thirst': 100,
+        'thirst_loss': 0.01,
+        'water_speed': 0.4,
+        'lifespan': 15000,
+        'radius': 4,
+        'damage': 15
+    },
+    'sparrow': {
+        'max_hunger': 100,
+        'hunger_loss': 0.05,
+        'health': 10,
+        'speed': 0.5, # slow on ground
+        'sprint_speed': 4.0, # fast flying
+        'stamina': 150,
+        'max_thirst': 100,
+        'thirst_loss': 0.02,
+        'water_speed': 0,
+        'lifespan': 10000,
+        'radius': 3
+    },
+    'hawk': {
+        'max_hunger': 200,
+        'hunger_loss': 0.05,
+        'health': 50,
+        'speed': 3.0,
+        'sprint_speed': 6.0,
+        'stamina': 250,
+        'max_thirst': 150,
+        'thirst_loss': 0.02,
+        'water_speed': 0,
+        'lifespan': 12000,
+        'radius': 6,
+        'damage': 20
     }
 }
+
+C_FISH = (255, 165, 0)
+C_SNAKE = (128, 0, 128)
+C_SPARROW = (139, 69, 19)
+C_HAWK = (255, 0, 0)
