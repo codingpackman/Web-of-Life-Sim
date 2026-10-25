@@ -1,6 +1,8 @@
 import random
 import math
 import config
+import world as world_mod
+import math
 
 class AnimalAI:
     def __init__(self, species, parents=None):
@@ -25,7 +27,7 @@ class AnimalAI:
                 'cohesion': random.uniform(0.5, 1.5),
                 'burrow': random.uniform(1.0, 2.0) if species == 'rabbit' else 0.0
             }
-        self.memory_map = {} # grid-based spatial memory: {'danger': 0, 'food': 0, 'water': 0}
+        self.memory_map = {} # grid-based spatial memory: {'danger_day': 0, 'danger_night': 0, 'food': 0, 'water': 0}
         self.grid_size = 50
 
         # Generational Memory Transfer
@@ -34,22 +36,27 @@ class AnimalAI:
             for p_map in parent_maps:
                 for key, val in p_map.items():
                     if key not in self.memory_map:
-                        self.memory_map[key] = {'danger': 0.0, 'food': 0.0, 'water': 0.0}
-                    self.memory_map[key]['danger'] += val['danger'] * 0.25
+                        self.memory_map[key] = {'danger_day': 0.0, 'danger_night': 0.0, 'food': 0.0, 'water': 0.0}
+                    self.memory_map[key]['danger_day'] += val['danger_day'] * 0.25
+                    self.memory_map[key]['danger_night'] += val['danger_night'] * 0.25
                     self.memory_map[key]['food'] += val['food'] * 0.25
                     self.memory_map[key]['water'] += val['water'] * 0.25
 
     def get_grid_key(self, x, y):
         return (int(x // self.grid_size), int(y // self.grid_size))
 
-    def update_memory(self, x, y, value_change, stimulus_type='danger'):
+    def update_memory(self, x, y, value_change, stimulus_type='danger', is_night=False):
         key = self.get_grid_key(x, y)
         if key not in self.memory_map:
-            self.memory_map[key] = {'danger': 0.0, 'food': 0.0, 'water': 0.0}
-        self.memory_map[key][stimulus_type] += value_change
+            self.memory_map[key] = {'danger_day': 0.0, 'danger_night': 0.0, 'food': 0.0, 'water': 0.0}
+
 
         # Learn from experience (Machine Learning lite)
-        if stimulus_type == 'danger' and value_change > 0: # More danger
+        # Handle temporal splitting
+        real_stimulus = 'danger_night' if stimulus_type == 'danger' and is_night else ('danger_day' if stimulus_type == 'danger' else stimulus_type)
+        self.memory_map[key][real_stimulus] += value_change
+
+        if stimulus_type == 'danger' and value_change > 0:
             self.weights['predator'] *= 1.01
         elif stimulus_type == 'food' and value_change > 0:
             self.weights['food'] *= 1.01
@@ -61,7 +68,7 @@ class AnimalAI:
 
     def get_location_memory(self, x, y):
         key = self.get_grid_key(x, y)
-        return self.memory_map.get(key, {'danger': 0.0, 'food': 0.0, 'water': 0.0})
+        return self.memory_map.get(key, {'danger_day': 0.0, 'danger_night': 0.0, 'food': 0.0, 'water': 0.0})
 
     @staticmethod
     def _are_deer_family(a, b):
@@ -122,6 +129,31 @@ class AnimalAI:
                 entity.state = "AGGRESSIVE"
             elif entity.state == "AGGRESSIVE":
                 entity.state = "FORAGING"
+
+        if getattr(entity, 'dive_target', None):
+            dx = entity.dive_target.x - entity.x
+            dy = entity.dive_target.y - entity.y
+            dist_sq = dx**2 + dy**2
+            if dist_sq > 0:
+                dist = math.sqrt(dist_sq)
+                target_fx = dx / dist
+                target_fy = dy / dist
+
+                # Severe dampening (cannot turn fast)
+                # We blend the new target force with the current velocity vector heavily biased to velocity
+                mag_v = math.sqrt(entity.vx**2 + entity.vy**2)
+                if mag_v > 0:
+                    current_fx = entity.vx / mag_v
+                    current_fy = entity.vy / mag_v
+                else:
+                    current_fx, current_fy = target_fx, target_fy
+
+                # 95% momentum, 5% turning
+                fx = current_fx * 0.95 + target_fx * 0.05
+                fy = current_fy * 0.95 + target_fy * 0.05
+
+                mag_f = math.sqrt(fx**2 + fy**2)
+                return fx/mag_f, fy/mag_f
 
         if getattr(entity, 'state', 'FORAGING') == 'FLEEING':
             current_food_weight = 0.0
@@ -405,9 +437,11 @@ class AnimalAI:
 
         # Apply spatial memory bias
         mem_vals = self.get_location_memory(entity.x, entity.y)
-        if mem_vals['danger'] > 0: # Danger area
-            fx += random.uniform(-1, 1) * mem_vals['danger'] # Panic jitter
-            fy += random.uniform(-1, 1) * mem_vals['danger']
+        is_night_now = getattr(world, 'season_tick', 0) > config.DAY_LENGTH
+        current_danger = mem_vals['danger_night'] if is_night_now else mem_vals['danger_day']
+        if current_danger > 0:
+            fx += random.uniform(-1, 1) * current_danger
+            fy += random.uniform(-1, 1) * current_danger
         if mem_vals['food'] > 0:
             # add small bias towards current center of grid, very rough
             grid_center_x = (entity.x // self.grid_size) * self.grid_size + self.grid_size / 2

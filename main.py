@@ -4,7 +4,7 @@ import os
 import random
 import config
 from world import World
-from animals import Rabbit, Deer, Wolf
+from animals import Rabbit, Deer, Wolf, Fish, Snake, Sparrow, Hawk
 
 class Simulator:
     def __init__(self, headless=False):
@@ -18,13 +18,14 @@ class Simulator:
         self.font = pygame.font.SysFont(None, 24)
 
         self.world = World()
+        self.world.spatial_hash = __import__('world').SpatialHash(cell_size=150)
         self.animals = []
-        self._init_animals(10, 10, 10) # 20 rabbits, 20 deer, 5 wolves
+        self._init_animals(10, 10, 10, 10, 5, 5, 3)
 
         self.running = True
         self.headless = headless
 
-    def _init_animals(self, num_rabbits, num_deer, num_wolves):
+    def _init_animals(self, num_rabbits, num_deer, num_wolves, num_fish, num_snakes=5, num_sparrows=5, num_hawks=3):
         for _ in range(num_rabbits):
             x = random.randint(0, config.SCREEN_WIDTH)
             y = random.randint(0, config.SCREEN_HEIGHT)
@@ -43,18 +44,63 @@ class Simulator:
             if not self.world.in_water(x, y):
                 self.animals.append(Wolf(x, y))
 
+        for _ in range(num_fish):
+            x = random.randint(0, config.SCREEN_WIDTH)
+            y = random.randint(self.world.river.y, self.world.river.y + self.world.river.h)
+            self.animals.append(Fish(x, y))
+
+        for _ in range(num_snakes):
+            x = random.randint(0, config.SCREEN_WIDTH)
+            y = random.randint(0, config.SCREEN_HEIGHT)
+            if not self.world.in_water(x, y):
+                self.animals.append(Snake(x, y))
+
+        for _ in range(num_sparrows):
+            x = random.randint(0, config.SCREEN_WIDTH)
+            y = random.randint(0, config.SCREEN_HEIGHT)
+            self.animals.append(Sparrow(x, y))
+
+        for _ in range(num_hawks):
+            x = random.randint(0, config.SCREEN_WIDTH)
+            y = random.randint(0, config.SCREEN_HEIGHT)
+            self.animals.append(Hawk(x, y))
+
     def update(self):
         self.world.update()
 
+        self.world.spatial_hash.clear()
+        for entity in self.animals:
+            self.world.spatial_hash.insert(entity)
+        for entity in self.world.trees:
+            self.world.spatial_hash.insert(entity)
+        for entity in self.world.bushes:
+            self.world.spatial_hash.insert(entity)
+
         for animal in self.animals:
             animal.update(self.world, self.animals)
-            if animal.species == 'wolf':
-                animal.hunt(self.animals)
+            if getattr(animal, 'species', None) in ['wolf', 'snake', 'hawk']:
+                animal.hunt(self.animals, self.world)
 
+        if hasattr(self.world, 'hatched_animals') and self.world.hatched_animals:
+            self.animals.extend(self.world.hatched_animals)
+            self.world.hatched_animals.clear()
+
+        self.world.eggs = [e for e in self.world.eggs if not e.dead]
         self.animals = [a for a in self.animals if not a.dead]
 
     def render(self):
         self.screen.fill(self.world.get_bg_color())
+
+        season_tick = self.world.season_tick
+        day_length = config.DAY_LENGTH
+        darkness = 0
+        if season_tick > day_length:
+            night_tick = season_tick - day_length
+            half_night = day_length / 2
+            if night_tick < half_night:
+                darkness = min(150, int((night_tick / half_night) * 150))
+            else:
+                darkness = min(150, int(((day_length - night_tick) / half_night) * 150))
 
         # Draw River
         pygame.draw.rect(self.screen, config.C_RIVER, (self.world.river.x, self.world.river.y, self.world.river.w, self.world.river.h))
@@ -91,17 +137,38 @@ class Simulator:
             color = config.C_RABBIT
             if a.species == 'deer': color = config.C_DEER
             elif a.species == 'wolf': color = config.C_WOLF
+            elif a.species == 'fish': color = config.C_FISH
+            elif a.species == 'snake': color = config.C_SNAKE
+            elif a.species == 'sparrow': color = config.C_SPARROW
+            elif a.species == 'hawk': color = config.C_HAWK
 
             if getattr(a, 'is_hidden', False):
                 if a.species == 'rabbit':
-                    # Darken the color to indicate underground
                     color = (max(0, color[0] - 80), max(0, color[1] - 80), max(0, color[2] - 80))
                 else:
                     continue
 
+            if getattr(a, 'climbing_tree', None) is not None:
+                # Make slightly transparent or just darker to indicate climbing
+                color = (max(0, color[0] - 30), max(0, color[1] - 30), max(0, color[2] - 30))
+
             # draw baby indicator
             radius = a.radius if a.is_adult else a.radius * 0.6
-            pygame.draw.circle(self.screen, color, (int(a.x), int(a.y)), int(radius))
+
+            if getattr(a, 'flying', False):
+                # Make it larger and slightly transparent to look like it's in the air
+                radius *= 1.5
+                fly_surface = pygame.Surface((int(radius*2), int(radius*2)), pygame.SRCALPHA)
+                pygame.draw.circle(fly_surface, (*color, 200), (int(radius), int(radius)), int(radius))
+                self.screen.blit(fly_surface, (int(a.x - radius), int(a.y - radius)))
+            else:
+                pygame.draw.circle(self.screen, color, (int(a.x), int(a.y)), int(radius))
+
+        if darkness > 0:
+            dark_surface = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
+            dark_surface.set_alpha(darkness)
+            dark_surface.fill((0, 0, 0))
+            self.screen.blit(dark_surface, (0, 0))
 
         self.draw_ui()
         pygame.display.flip()
