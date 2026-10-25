@@ -5,6 +5,34 @@ import world as world_mod
 from ai import AnimalAI
 from world import Burrow
 
+
+def _place_bird_in_tree(bird, tree):
+    angle = random.uniform(0, math.tau)
+    distance = math.sqrt(random.random()) * max(0, tree.radius - bird.radius)
+    bird.in_tree = tree
+    bird.perch_position = (
+        tree.x + math.cos(angle) * distance,
+        tree.y + math.sin(angle) * distance,
+    )
+    bird.x, bird.y = bird.perch_position
+    bird.is_hidden = True
+
+
+def _feed_predator(predator, prey):
+    meal_fraction = 1.0
+    if predator.species == "hawk" or (
+        predator.species == "wolf" and prey.species == "rabbit"
+    ):
+        meal_fraction = 0.5
+
+    predator.hunger = min(
+        predator.max_hunger,
+        predator.hunger + predator.max_hunger * meal_fraction,
+    )
+    if predator.hunger >= predator.max_hunger * 0.9:
+        predator.feeding_cooldown = config.PREDATOR_FULL_COOLDOWN
+
+
 class Animal:
     def __init__(self, x, y, species, parents=None):
         self.tick_offset = random.randint(0, 5)
@@ -55,6 +83,7 @@ class Animal:
         self.current_activity = None
         self.activity_target = None
         self.activity_timer = 0
+        self.feeding_cooldown = 0
 
     def mutate(self):
         # Evolution: Slight variations in stats from parents
@@ -93,6 +122,8 @@ class Animal:
 
         self.ai.decay_memory()
         self.tick_count += 1
+        if self.feeding_cooldown > 0:
+            self.feeding_cooldown -= 1
 
         # Swarm intelligence: share memory with nearby friends
         nearby = world.spatial_hash.get_nearby(self.x, self.y) if hasattr(world, 'spatial_hash') else animals
@@ -136,7 +167,15 @@ class Animal:
             if self.thirst < self.max_thirst:
                 self.record_activity("drinking", self.x, self.y)
             self.thirst = min(self.max_thirst, self.thirst + 1.0)
+
+        if in_water and self.species not in ['sparrow', 'hawk']:
             current_speed = self.water_speed
+            if self.species == 'fish' and self.underwater:
+                current_speed = config.FISH_UNDERWATER_SPEED
+        elif self.species in ['sparrow', 'hawk']:
+            current_speed = self.sprint_speed if self.flying else self.base_speed
+            if self.species == 'hawk' and self.dive_target:
+                current_speed = config.HAWK_DIVE_SPEED
         else:
             # Sprints if hungry, thirsty, or in danger (simulated by ai vector magnitude if we wanted, but let's just tie it to stamina)
             if self.stamina > 0:
@@ -149,7 +188,11 @@ class Animal:
             self.stamina += 0.1
 
         # Movement (Tick staggering for heavy AI)
-        if self.tick_count % 6 == self.tick_offset:
+        if (
+            self.tick_count % 6 == self.tick_offset
+            or (self.species == 'hawk' and self.dive_target)
+            or (self.species == 'fish' and self.underwater)
+        ):
             fx, fy = self.ai.calculate_force(self, world, animals)
             self.vx = fx * current_speed
             self.vy = fy * current_speed
@@ -161,13 +204,17 @@ class Animal:
         self.x += self.vx
         self.y += self.vy
 
-        self.x = max(self.radius, min(config.SCREEN_WIDTH - self.radius, self.x))
-        self.y = max(self.radius, min(config.SCREEN_HEIGHT - self.radius, self.y))
+        movement_margin = self.radius
+        self.x = max(movement_margin, min(config.SCREEN_WIDTH - movement_margin, self.x))
+        self.y = max(movement_margin, min(config.SCREEN_HEIGHT - movement_margin, self.y))
 
         # FSM Update (Predator Check)
         predator_near = False
         for other in animals:
-            if other.species == 'wolf' and not other.dead and self.species in ['rabbit', 'deer']:
+            is_predator = other.species == 'wolf' or (
+                self.species == 'rabbit' and other.species == 'snake'
+            )
+            if is_predator and not other.dead and self.species in ['rabbit', 'deer']:
                 if math.hypot(other.x - self.x, other.y - self.y) < 150:
                     predator_near = True
                     break
@@ -354,10 +401,14 @@ class Rabbit(Animal):
 
         if self.pregnant and world.season == "spring":
             self.pregnant = False
-            num_kids = random.randint(2, 5)
+            num_kids = random.randint(2, 3)
             for _ in range(num_kids):
                 parents = [self, getattr(self, 'mate', None)]
-                kid = Rabbit(self.home_burrow.x, self.home_burrow.y, parents=parents)
+                kid = Rabbit(
+                    self.home_burrow.x + random.uniform(-self.home_burrow.radius, self.home_burrow.radius),
+                    self.home_burrow.y + random.uniform(-self.home_burrow.radius, self.home_burrow.radius),
+                    parents=parents,
+                )
                 kid.mutate()
                 kid.home_burrow = self.home_burrow
                 self.home_burrow.occupants.append(kid)
@@ -478,6 +529,8 @@ class Wolf(Animal):
             animals.append(kid)
 
     def hunt(self, animals, world):
+        if self.hunger >= self.max_hunger * 0.9 or self.feeding_cooldown > 0:
+            return
         if self.attack_cooldown <= 0:
             for a in animals:
                 if getattr(a, 'is_hidden', False):
@@ -493,8 +546,10 @@ class Wolf(Animal):
                                 self.ai.weights['hunt_rabbit'] = min(3.0, self.ai.weights.get('hunt_rabbit', 1.0) + 0.1)
                             elif a.species == 'deer':
                                 self.ai.weights['hunt_deer'] = min(3.0, self.ai.weights.get('hunt_deer', 1.0) + 0.1)
-                            self.hunger = self.max_hunger # Restore hunger upon killing
-                            self.attack_cooldown = 1000 # Stop hunting for a while
+                            _feed_predator(self, a)
+                            self.attack_cooldown = (
+                                1000 if self.feeding_cooldown > 0 else 30
+                            )
 
                             # Negative reinforcement for prey species in this area
                             a.ai.update_memory(a.x, a.y, 5, 'danger', is_night=getattr(world, 'season_tick', 0) > __import__('config').DAY_LENGTH)
@@ -508,18 +563,52 @@ class Fish(Animal):
         self.hunger_loss = 0
         self.thirst_loss = 0
         self.age = 0
+        self.underwater = False
+        self.underwater_timer = 0
+        self.dive_cooldown = 0
 
     def update(self, world, animals):
         if self.dead: return
 
-        if self.y < world.river.y:
-            self.y = world.river.y + 2
-            self.vy = abs(self.vy)
-        elif self.y > world.river.y + world.river.h:
-            self.y = world.river.y + world.river.h - 2
-            self.vy = -abs(self.vy)
+        if self.underwater:
+            self.underwater_timer -= 1
+            if self.underwater_timer <= 0:
+                self.underwater = False
+                self.underwater_timer = 0
+                self.dive_cooldown = config.FISH_DIVE_COOLDOWN
+        elif self.dive_cooldown > 0:
+            self.dive_cooldown -= 1
+        elif any(
+            not animal.dead
+            and animal.species in ['hawk', 'snake']
+            and math.hypot(animal.x - self.x, animal.y - self.y) < 140
+            for animal in animals
+            if animal is not self
+        ):
+            self.underwater = True
+            self.underwater_timer = config.FISH_DIVE_DURATION
 
+        self.is_hidden = self.underwater
         super().update(world, animals)
+        if self.dead:
+            return
+
+        min_x = self.radius + 12
+        max_x = config.SCREEN_WIDTH - self.radius - 12
+        min_y = world.river.y + self.radius + 2
+        max_y = world.river.y + world.river.h - self.radius - 2
+        if self.x <= min_x:
+            self.x = min_x
+            self.vx = abs(self.vx)
+        elif self.x >= max_x:
+            self.x = max_x
+            self.vx = -abs(self.vx)
+        if self.y <= min_y:
+            self.y = min_y
+            self.vy = abs(self.vy)
+        elif self.y >= max_y:
+            self.y = max_y
+            self.vy = -abs(self.vy)
 
     def eat(self, world):
         pass
@@ -593,10 +682,23 @@ class Snake(Animal):
                     return
 
     def hunt(self, animals, world):
+        if self.hunger >= self.max_hunger * 0.9 or self.feeding_cooldown > 0:
+            return
         if self.attack_cooldown <= 0:
             for a in animals:
-                if getattr(a, 'is_hidden', False): continue
+                submerged_prey = (
+                    self.species == 'snake'
+                    and a.species == 'fish'
+                    and getattr(a, 'underwater', False)
+                )
+                if getattr(a, 'is_hidden', False) and not submerged_prey and not (
+                    getattr(a, 'in_tree', None)
+                    and self.climbing_tree is a.in_tree
+                ):
+                    continue
                 if a.species in ['rabbit', 'fish', 'sparrow'] and not a.dead:
+                    if a.species == 'sparrow' and a.flying:
+                        continue
                     # If in tree, can only attack birds that land, or baby rabbits at roots, just use distance
                     # Birds landing is implicitly being at ground level or tree x,y
                     if (self.x - a.x)**2 + (self.y - a.y)**2 < (self.radius + a.radius + 10)**2:
@@ -604,6 +706,7 @@ class Snake(Animal):
                         self.attack_cooldown = 20
                         if a.health <= 0:
                             a.die("snake", world)
+                            _feed_predator(self, a)
                             self.attack_cooldown = 300
                         break
 
@@ -620,53 +723,216 @@ class Snake(Animal):
 class Sparrow(Animal):
     def __init__(self, x, y, parents=None):
         super().__init__(x, y, 'sparrow', parents)
-        self.flying = False
+        self.flying = True
         self.in_tree = None
         self.home_nest = None
         self.flight_timer = 0
+        self.flight_target = None
+        self.flight_goal = None
+        self.ground_target = None
+        self.landing_cooldown = 0
+        self.perch_position = None
+        self.nest_search_timer = random.randint(300, 600)
+
+    def _nearest_tree(self, world):
+        trees = [
+            tree for tree in world.trees
+            if not tree.dead
+            and 150 <= tree.x <= config.SCREEN_WIDTH - 150
+            and 150 <= tree.y <= config.SCREEN_HEIGHT - 150
+        ]
+        alternatives = [tree for tree in trees if tree is not self.in_tree]
+        return min(
+            alternatives or trees,
+            key=lambda tree: math.hypot(tree.x - self.x, tree.y - self.y),
+            default=None,
+        )
+
+    def _water_target(self, world):
+        river = world.river
+        targets = [
+            (min(max(self.x, 30), config.SCREEN_WIDTH - 30), river.y + river.h / 2)
+        ]
+        targets.extend(
+            (hole.x, hole.y)
+            for hole in world.water_holes
+            if not hole.frozen
+        )
+        return min(targets, key=lambda target: math.hypot(target[0] - self.x, target[1] - self.y))
+
+    def _choose_flight_goal(self, world, goal):
+        self.flight_goal = goal
+        self.ground_target = None
+        if goal == "tree":
+            nest_tree = (
+                self.home_nest.tree
+                if self.home_nest and not self.home_nest.tree.dead
+                else None
+            )
+            tree = nest_tree or self._nearest_tree(world)
+            self.flight_target = (tree.x, tree.y) if tree else None
+        elif goal == "food":
+            bush = min(
+                (bush for bush in world.bushes if not bush.dead and bush.food_count > 0),
+                key=lambda bush: math.hypot(bush.x - self.x, bush.y - self.y),
+                default=None,
+            )
+            self.flight_target = (bush.x, bush.y) if bush else None
+        elif goal == "water":
+            self.flight_target = self._water_target(world)
 
     def update(self, world, animals):
         if self.dead: return
 
-        # Takeoff/Landing logic
-        if self.flying:
-            self.stamina -= 0.5
-            if self.stamina <= 0 or (self.hunger < self.max_hunger * 0.2) or (self.thirst < self.max_thirst * 0.2):
-                # Need to land
-                self.flying = False
+        predators_near = any(
+            other.species in ['hawk', 'snake', 'wolf']
+            and not other.dead
+            and not getattr(other, 'is_hidden', False)
+            and math.hypot(other.x - self.x, other.y - self.y) < 180
+            for other in animals
+            if other is not self
+        )
 
-                # Check if landing in tree
-                nearby = world.spatial_hash.get_nearby(self.x, self.y) if hasattr(world, 'spatial_hash') else world.trees
-                for t in nearby:
-                    if isinstance(t, world_mod.Tree):
-                        if (self.x - t.x)**2 + (self.y - t.y)**2 < (t.radius)**2:
-                            self.in_tree = t
-                            break
+        if self.in_tree and self.in_tree.dead:
+            self.in_tree = None
+            self.perch_position = None
+        if self.home_nest and self.home_nest.tree.dead:
+            self.home_nest = None
+
+        if self.landing_cooldown > 0:
+            self.landing_cooldown -= 1
+        if self.in_tree and not self.flying and self.perch_position:
+            self.x, self.y = self.perch_position
+
+        needs_food = self.hunger < self.max_hunger * 0.9
+        needs_water = self.thirst < self.max_thirst * 0.8
+        if self.flying:
+            self.stamina = max(0, self.stamina - 0.5)
+            self.flight_timer += 1
+            goal = "tree" if predators_near else (
+                "water" if needs_water else "food" if needs_food else "tree"
+            )
+            if self.flight_goal != goal or self.flight_target is None:
+                self._choose_flight_goal(world, goal)
+
+            if self.flight_goal == "tree" and self.flight_target:
+                target_tree = next(
+                    (
+                        tree for tree in world.trees
+                        if not tree.dead
+                        and (tree.x, tree.y) == self.flight_target
+                    ),
+                    None,
+                )
+                arrived = target_tree and math.hypot(self.x - target_tree.x, self.y - target_tree.y) < target_tree.radius + 12
+            elif self.flight_target:
+                target_x, target_y = self.flight_target
+                arrived = math.hypot(self.x - target_x, self.y - target_y) < 14
+            else:
+                arrived = False
+
+            if arrived:
+                self.flying = False
+                self.flight_timer = 0
+                self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
+                if self.flight_goal == "tree" and target_tree:
+                    _place_bird_in_tree(self, target_tree)
+                else:
+                    self.in_tree = None
+                    self.perch_position = None
+                    self.ground_target = self.flight_target
+                self.flight_target = None
+            elif self.stamina <= 0 or self.flight_timer >= 240:
+                self.flying = False
+                self.flight_timer = 0
+                self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
+                nearest_tree = self._nearest_tree(world)
+                self.in_tree = None
+                self.perch_position = None
+                if nearest_tree and math.hypot(nearest_tree.x - self.x, nearest_tree.y - self.y) < 50:
+                    _place_bird_in_tree(self, nearest_tree)
+                self.ground_target = None
+                self.flight_target = None
+                self.flight_goal = "tree"
         else:
-            if not self.in_tree:
-                self.stamina += 0.5
-            if self.stamina >= self.max_stamina and not self.in_tree:
-                if random.random() < 0.05: # Chance to take off if not in tree
-                    self.flying = True
-            elif self.in_tree and self.stamina >= self.max_stamina:
-                if self.hunger < self.max_hunger * 0.8 or self.thirst < self.max_thirst * 0.8:
-                    # Need to leave tree to find food/water
+            self.stamina = min(self.max_stamina, self.stamina + 0.75)
+            if self.nest_search_timer > 0:
+                self.nest_search_timer -= 1
+            at_food = self.flight_goal == "food" and any(
+                bush.food_count > 0 and math.hypot(self.x - bush.x, self.y - bush.y) < bush.radius + self.radius
+                for bush in world.bushes
+            )
+            at_water = world.in_water(self.x, self.y)
+            if (
+                self.in_tree
+                and not self.home_nest
+                and self.hunger >= self.max_hunger * 0.9
+                and self.thirst >= self.max_thirst * 0.8
+                and self.landing_cooldown == 0
+                and self.nest_search_timer == 0
+            ):
+                candidates = [
+                    tree for tree in world.trees
+                    if not tree.dead and tree is not self.in_tree
+                ]
+                target_tree = random.choice(candidates) if candidates else None
+                self.nest_search_timer = random.randint(300, 600)
+                if target_tree:
+                    self.flight_goal = "tree"
+                    self.flight_target = (target_tree.x, target_tree.y)
                     self.flying = True
                     self.in_tree = None
-
-        # Update z-axis effects
-        if self.in_tree:
-            self.x = self.in_tree.x
-            self.y = self.in_tree.y
-            self.vx, self.vy = 0, 0
+                    self.perch_position = None
+            elif self.landing_cooldown == 0 and predators_near:
+                self._choose_flight_goal(world, "tree")
+                self.flying = True
+                self.in_tree = None
+                self.perch_position = None
+            elif self.landing_cooldown == 0:
+                if needs_water and not at_water:
+                    self._choose_flight_goal(world, "water")
+                    self.flying = True
+                    self.in_tree = None
+                    self.perch_position = None
+                elif needs_food and not at_food:
+                    self._choose_flight_goal(world, "food")
+                    self.flying = True
+                    self.in_tree = None
+                    self.perch_position = None
+                elif (
+                    not needs_food
+                    and not needs_water
+                    and (
+                        self.flight_goal != "water"
+                        or self.thirst >= self.max_thirst
+                    )
+                    and not self.in_tree
+                ):
+                    self._choose_flight_goal(world, "tree")
+                    self.flying = True
 
         if not self.is_adult and world.season == "spring":
             self.thirst = self.max_thirst # Babies don't need water
 
+        self.is_hidden = bool(self.in_tree and not self.flying)
         super().update(world, animals)
+        if self.in_tree and not self.flying:
+            self.x, self.y = self.perch_position
+            self.vx = self.vy = 0
+            self.is_hidden = True
+        elif not self.flying and self.ground_target:
+            self.x, self.y = self.ground_target
+            self.vx = self.vy = 0
+            if self.flight_goal == "water" and self.thirst >= self.max_thirst:
+                self.ground_target = None
+            elif self.flight_goal == "food" and (
+                self.hunger >= self.max_hunger
+                or not any(bush.food_count > 0 for bush in world.bushes)
+            ):
+                self.ground_target = None
 
     def eat(self, world):
-        if self.flying or self.in_tree: return
+        if self.flying or self.in_tree or self.flight_goal != "food": return
         if self.hunger >= self.max_hunger: return
 
         nearby = world.spatial_hash.get_nearby(self.x, self.y) if hasattr(world, 'spatial_hash') else world.bushes
@@ -681,26 +947,38 @@ class Sparrow(Animal):
                 break
 
     def reproduce(self, world, animals):
-        if world.season == "spring" and self.is_adult:
-            if self.gender == "male" and not self.home_nest and self.in_tree:
-                # Male builds nest in tree if one doesn't exist
-                has_nest = any(n.tree == self.in_tree for n in world.nests)
-                if not has_nest:
-                    nest = world_mod.Nest(self.in_tree)
-                    world.nests.append(nest)
+        if not self.is_adult or not self.in_tree:
+            return
+
+        if self.gender == "male" and not self.home_nest and world.season == "spring":
+            has_nest = any(n.tree == self.in_tree for n in world.nests)
+            if not has_nest:
+                nest = world_mod.Nest(self.in_tree)
+                world.nests.append(nest)
+                self.home_nest = nest
+                nest.occupants.append(self)
+        elif self.gender == "female" and not self.home_nest:
+            for nest in world.nests:
+                if (
+                    nest.tree == self.in_tree
+                    and len(nest.occupants) == 1
+                    and nest.occupants[0].gender == 'male'
+                ):
                     self.home_nest = nest
                     nest.occupants.append(self)
+                    break
 
-            elif self.gender == "female" and not self.pregnant:
-                if self.in_tree:
-                    # Check for male nest in this tree
-                    for nest in world.nests:
-                        if nest.tree == self.in_tree and len(nest.occupants) == 1 and nest.occupants[0].gender == 'male':
-                            self.home_nest = nest
-                            nest.occupants.append(self)
-                            world.eggs.append(world_mod.Egg(self.x, self.y, 'sparrow', nest.occupants.copy()))
-                            self.pregnant = True
-                            break
+        if (
+            self.gender == "female"
+            and self.home_nest
+            and self.in_tree is self.home_nest.tree
+            and world.season == "spring"
+            and not self.pregnant
+        ):
+            world.eggs.append(
+                world_mod.Egg(self.x, self.y, 'sparrow', self.home_nest.occupants.copy())
+            )
+            self.pregnant = True
 
 class Hawk(Animal):
     def __init__(self, x, y, parents=None):
@@ -710,19 +988,67 @@ class Hawk(Animal):
         self.home_nest = None
         self.dive_target = None
         self.dive_timer = 0
+        self.dive_cooldown = 0
+        self.flight_timer = 0
+        self.perch_timer = 0
+        self.flight_target = None
+        self.flight_goal = None
+        self.ground_target = None
+        self.landing_cooldown = 0
+        self.perch_position = None
         self.damage = config.ANIMAL_STATS['hawk']['damage']
+        self.attack_cooldown = 0
+
+    def _nearest_tree(self, world):
+        return min(
+            (
+                tree for tree in world.trees
+                if not tree.dead
+                and 150 <= tree.x <= config.SCREEN_WIDTH - 150
+                and 150 <= tree.y <= config.SCREEN_HEIGHT - 150
+            ),
+            key=lambda tree: math.hypot(tree.x - self.x, tree.y - self.y),
+            default=None,
+        )
+
+    def _water_target(self, world):
+        river = world.river
+        targets = [
+            (min(max(self.x, 30), config.SCREEN_WIDTH - 30), river.y + river.h / 2)
+        ]
+        targets.extend(
+            (hole.x, hole.y)
+            for hole in world.water_holes
+            if not hole.frozen
+        )
+        return min(targets, key=lambda target: math.hypot(target[0] - self.x, target[1] - self.y))
 
     def update(self, world, animals):
         if self.dead: return
 
+        if self.dive_cooldown > 0:
+            self.dive_cooldown -= 1
+        if self.landing_cooldown > 0:
+            self.landing_cooldown -= 1
+        if self.in_tree and self.in_tree.dead:
+            self.in_tree = None
+            self.perch_position = None
+        if self.in_tree and not self.flying and self.perch_position:
+            self.x, self.y = self.perch_position
+
         if self.dive_target:
             self.flying = True
-            # Dive logic (PID-ish clamp on rotation)
+            self.state = "DIVING"
             if getattr(self.dive_target, 'dead', True) or getattr(self.dive_target, 'is_hidden', False):
                 self.dive_target = None
                 self.dive_timer = 0
+                self.dive_cooldown = config.HAWK_HUNT_COOLDOWN
+                self.flying = False
+                self.in_tree = None
+                self.flight_timer = 0
+                self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
             else:
-                self.stamina -= 1.0
+                self.stamina = max(0, self.stamina - 1.0)
                 self.dive_timer += 1
                 dx = self.dive_target.x - self.x
                 dy = self.dive_target.y - self.y
@@ -734,31 +1060,141 @@ class Hawk(Animal):
                     self.dive_target.health -= self.damage
                     if self.dive_target.health <= 0:
                         self.dive_target.die("hawk", world)
+                        _feed_predator(self, self.dive_target)
                     self.dive_target = None
                     self.dive_timer = 0
-                    self.flying = False # Landed from dive
-                elif self.dive_timer > 60:
+                    self.dive_cooldown = config.HAWK_HUNT_COOLDOWN
+                    self.flying = False
+                    self.in_tree = None
+                    self.flight_timer = 0
+                    self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
+                    nearest_tree = min(
+                        (
+                            tree for tree in world.trees
+                            if 150 <= tree.x <= config.SCREEN_WIDTH - 150
+                            and 150 <= tree.y <= config.SCREEN_HEIGHT - 150
+                        ),
+                        key=lambda tree: math.hypot(tree.x - self.x, tree.y - self.y),
+                        default=None,
+                    )
+                    if nearest_tree and math.hypot(nearest_tree.x - self.x, nearest_tree.y - self.y) < 50:
+                        _place_bird_in_tree(self, nearest_tree)
+                        self.perch_timer = random.randint(180, 600)
+                elif self.dive_timer >= config.HAWK_DIVE_DURATION:
                     # Missed / gave up
                     self.dive_target = None
                     self.dive_timer = 0
+                    self.dive_cooldown = config.HAWK_HUNT_COOLDOWN
+                    self.flying = False
+                    self.in_tree = None
+                    self.flight_timer = 0
+                    self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
         else:
             if self.flying:
-                self.stamina -= 0.2
-                if self.stamina <= 0:
-                    self.flying = False
-            else:
-                if not self.in_tree:
-                    self.stamina += 0.5
-                if self.stamina >= self.max_stamina:
-                    if random.random() < 0.05:
-                        self.flying = True
+                self.state = "PATROLLING"
+                self.stamina = max(0, self.stamina - 0.2)
+                self.flight_timer += 1
+                needs_water = self.thirst < self.max_thirst * 0.8
+                if needs_water and self.flight_goal != "water":
+                    self.flight_goal = "water"
+                    self.flight_target = self._water_target(world)
+                    self.ground_target = None
 
-        if self.in_tree:
-            self.x = self.in_tree.x
-            self.y = self.in_tree.y
-            self.vx, self.vy = 0, 0
+                if self.flight_goal == "water" and self.flight_target:
+                    target_x, target_y = self.flight_target
+                    reached_target = math.hypot(self.x - target_x, self.y - target_y) < 14
+                    if reached_target or world.in_water(self.x, self.y):
+                        self.flying = False
+                        self.flight_target = None
+                        self.ground_target = (
+                            (target_x, target_y) if reached_target else (self.x, self.y)
+                        )
+                        self.flight_timer = 0
+                        self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
+                elif self.flight_goal == "tree" and self.flight_target:
+                    target_tree = next(
+                        (
+                            tree for tree in world.trees
+                            if not tree.dead
+                            and (tree.x, tree.y) == self.flight_target
+                        ),
+                        None,
+                    )
+                    if target_tree and math.hypot(self.x - target_tree.x, self.y - target_tree.y) < target_tree.radius + 12:
+                        self.flying = False
+                        _place_bird_in_tree(self, target_tree)
+                        self.flight_target = None
+                        self.flight_timer = 0
+                        self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
+                        self.perch_timer = random.randint(180, 600)
+                if self.flying and (self.stamina <= 0 or self.flight_timer >= 360):
+                    self.flying = False
+                    self.flight_timer = 0
+                    self.landing_cooldown = config.BIRD_LANDING_COOLDOWN
+                    self.flight_goal = "tree"
+                    self.ground_target = None
+                    nearest_tree = self._nearest_tree(world)
+                    if nearest_tree and math.hypot(nearest_tree.x - self.x, nearest_tree.y - self.y) < 50:
+                        _place_bird_in_tree(self, nearest_tree)
+                        self.perch_timer = random.randint(180, 600)
+            else:
+                self.state = "PERCHED" if self.in_tree else "RESTING"
+                self.stamina = min(self.max_stamina, self.stamina + 0.75)
+                needs_food = self.hunger < self.max_hunger * 0.9
+                needs_water = self.thirst < self.max_thirst * 0.8
+                at_water = world.in_water(self.x, self.y)
+                if self.landing_cooldown == 0 and needs_water and not at_water:
+                    self.flying = True
+                    self.in_tree = None
+                    self.flight_goal = "water"
+                    self.flight_target = self._water_target(world)
+                    self.ground_target = None
+                elif self.landing_cooldown == 0 and needs_food:
+                    self.flying = True
+                    self.in_tree = None
+                    self.flight_goal = None
+                    self.flight_target = None
+                    self.ground_target = None
+                elif (
+                    self.landing_cooldown == 0
+                    and self.thirst >= self.max_thirst
+                    and not needs_food
+                    and at_water
+                ):
+                    tree = self._nearest_tree(world)
+                    self.flying = True
+                    self.in_tree = None
+                    self.flight_goal = "tree"
+                    self.flight_target = (tree.x, tree.y) if tree else None
+                    self.ground_target = None
+                elif self.in_tree:
+                    self.perch_timer = max(0, self.perch_timer - 1)
+                    if self.landing_cooldown == 0 and self.perch_timer == 0 and self.stamina >= self.max_stamina * 0.8:
+                        self.flying = True
+                        self.in_tree = None
+                        self.flight_goal = None
+                        self.flight_target = None
+                elif self.landing_cooldown == 0 and self.stamina >= self.max_stamina * 0.8 and random.random() < 0.02:
+                    self.flying = True
+                    self.flight_goal = None
+                    self.flight_target = None
+
+        self.is_hidden = bool(self.in_tree and not self.flying)
+        if self.in_tree and not self.flying:
+            self.x, self.y = self.perch_position
+            self.vx = self.vy = 0
 
         super().update(world, animals)
+        if self.in_tree and not self.flying:
+            self.x, self.y = self.perch_position
+            self.vx = self.vy = 0
+            self.is_hidden = True
+        elif not self.flying and self.ground_target:
+            self.x, self.y = self.ground_target
+            self.vx = self.vy = 0
+            if self.flight_goal == "water" and self.thirst >= self.max_thirst:
+                self.ground_target = None
+                self.flight_goal = "tree"
 
     def eat(self, world):
         if self.flying: return
@@ -773,19 +1209,45 @@ class Hawk(Animal):
                 break
 
     def hunt(self, animals, world):
-        if not self.flying or self.dive_target: return
+        if (
+            self.hunger >= self.max_hunger * 0.9
+            or self.feeding_cooldown > 0
+        ):
+            return
+        if not self.flying:
+            if self.in_tree and self.attack_cooldown <= 0:
+                for prey in animals:
+                    if (
+                        prey.species == 'sparrow'
+                        and not prey.dead
+                        and getattr(prey, 'in_tree', None) is self.in_tree
+                    ):
+                        prey.health -= self.damage
+                        if prey.health <= 0:
+                            prey.die("hawk", world)
+                            _feed_predator(self, prey)
+                        self.attack_cooldown = 30
+                        break
+            return
+        if self.dive_target or self.dive_cooldown > 0: return
 
         # Look for prey from high up (huge vision radius)
         best_target = None
         best_dist_sq = float('inf')
         for a in animals:
-            if a.species in ['sparrow', 'fish', 'snake', 'rabbit'] and not getattr(a, 'dead', True) and not getattr(a, 'is_hidden', False):
+            same_tree = bool(self.in_tree and getattr(a, 'in_tree', None) is self.in_tree)
+            if (
+                a.species in ['sparrow', 'fish']
+                and not getattr(a, 'dead', True)
+                and (not getattr(a, 'is_hidden', False) or same_tree)
+            ):
                 # Don't target birds in trees unless we are in the same tree (handled by normal eating, wait Hawks eat meat)
-                if getattr(a, 'in_tree', None): continue
+                if getattr(a, 'in_tree', None) and not same_tree: continue
                 if getattr(a, 'climbing_tree', None): continue
 
                 d_sq = (a.x - self.x)**2 + (a.y - self.y)**2
-                if d_sq < 160000: # 400^2
+                hunt_range = config.HAWK_SPARROW_DETECTION_RANGE if a.species == 'sparrow' else 400
+                if d_sq < hunt_range**2:
                     if d_sq < best_dist_sq:
                         best_dist_sq = d_sq
                         best_target = a

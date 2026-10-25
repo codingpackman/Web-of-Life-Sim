@@ -148,12 +148,30 @@ class AnimalAI:
                 else:
                     current_fx, current_fy = target_fx, target_fy
 
-                # 95% momentum, 5% turning
-                fx = current_fx * 0.95 + target_fx * 0.05
-                fy = current_fy * 0.95 + target_fy * 0.05
+                current_angle = math.atan2(current_fy, current_fx)
+                target_angle = math.atan2(target_fy, target_fx)
+                angle_delta = (target_angle - current_angle + math.pi) % math.tau - math.pi
+                max_turn = math.radians(config.HAWK_DIVE_TURN_RATE_DEGREES)
+                angle = current_angle + max(-max_turn, min(max_turn, angle_delta))
+                return math.cos(angle), math.sin(angle)
 
-                mag_f = math.sqrt(fx**2 + fy**2)
-                return fx/mag_f, fy/mag_f
+        if entity.species == 'sparrow' and getattr(entity, 'flying', False):
+            target = getattr(entity, 'flight_target', None)
+            if target:
+                dx = target[0] - entity.x
+                dy = target[1] - entity.y
+                distance = math.hypot(dx, dy)
+                if distance > 0:
+                    return dx / distance, dy / distance
+
+        if entity.species == 'hawk' and getattr(entity, 'flying', False):
+            target = getattr(entity, 'flight_target', None)
+            if target:
+                dx = target[0] - entity.x
+                dy = target[1] - entity.y
+                distance = math.hypot(dx, dy)
+                if distance > 0:
+                    return dx / distance, dy / distance
 
         if getattr(entity, 'state', 'FORAGING') == 'FLEEING':
             current_food_weight = 0.0
@@ -183,6 +201,18 @@ class AnimalAI:
                 if bdist > 0:
                     fx += (bdx / bdist) * self.weights['burrow'] * 3.0
 
+        if entity.species == 'rabbit' and getattr(entity, 'home_burrow', None):
+            bdx = entity.home_burrow.x - entity.x
+            bdy = entity.home_burrow.y - entity.y
+            bdist = math.hypot(bdx, bdy)
+            if bdist > config.RABBIT_BURROW_RANGE:
+                range_pressure = min(
+                    2.5,
+                    1.0 + (bdist - config.RABBIT_BURROW_RANGE) / 100,
+                )
+                fx += (bdx / bdist) * range_pressure
+                fy += (bdy / bdist) * range_pressure
+
         if (
             entity.species == 'rabbit'
             and getattr(entity, 'home_burrow', None)
@@ -196,13 +226,13 @@ class AnimalAI:
                 fx += (bdx / bdist) * self.weights['burrow'] * 3.0
 
         # 1. Food attraction
-        if entity.species in ['rabbit', 'deer'] and current_food_weight > 0:
+        if entity.species in ['rabbit', 'deer', 'sparrow'] and current_food_weight > 0:
             # Herbivores seek plants
             closest_plant = None
             min_dist = float('inf')
 
             plants_to_check = []
-            if entity.species == 'rabbit':
+            if entity.species in ['rabbit', 'sparrow']:
                 plants_to_check = world.bushes
             else:
                 plants_to_check = world.trees + world.bushes
@@ -225,7 +255,9 @@ class AnimalAI:
                     and entity.home_burrow.food_stored + entity.carried_food < config.BURROW_MAX_FOOD
                 ):
                     mult = max(mult, 1.0)
-                hunger_force = 3.0 if mult > 0.5 else 1.0
+                if entity.species == 'sparrow' and entity.hunger < entity.max_hunger * 0.9:
+                    mult = max(mult, 1.0)
+                hunger_force = 4.0 if entity.species == 'sparrow' and mult > 0 else (3.0 if mult > 0.5 else 1.0)
                 fx += (closest_plant.x - entity.x) / min_dist * current_food_weight * mult * hunger_force
                 fy += (closest_plant.y - entity.y) / min_dist * current_food_weight * mult * hunger_force
 
@@ -234,7 +266,11 @@ class AnimalAI:
         thirst_force = 3.0 if water_mult > 0.5 else 1.0
 
         # Water Repulsion if full
-        if entity.thirst >= entity.max_thirst * 0.95 and world.in_water(entity.x, entity.y):
+        if (
+            entity.species != 'fish'
+            and entity.thirst >= entity.max_thirst * 0.95
+            and world.in_water(entity.x, entity.y)
+        ):
             current_water_weight = -2.0
             if entity.y >= world.river.y and entity.y <= world.river.y + world.river.h:
                 if entity.y < world.river.y + world.river.h / 2:
@@ -252,7 +288,7 @@ class AnimalAI:
                                 fx += (dx / dist) * 5.0
                                 fy += (dy / dist) * 5.0
 
-        if entity.thirst < entity.max_thirst * 0.7:
+        if entity.species != 'fish' and entity.thirst < entity.max_thirst * 0.7:
             # River pull (vertical)
             if entity.y < world.river.y:
                 fy += current_water_weight * water_mult * thirst_force
@@ -304,7 +340,13 @@ class AnimalAI:
 
         # Wolf Attention Span Logic
         if entity.species == 'wolf':
-            if getattr(entity, 'wander_timer', 0) > 0:
+            if (
+                entity.hunger >= entity.max_hunger * 0.9
+                or getattr(entity, 'feeding_cooldown', 0) > 0
+            ):
+                entity.state = "WANDERING"
+                entity.chase_target = None
+            elif getattr(entity, 'wander_timer', 0) > 0:
                 entity.state = "WANDERING"
                 entity.chase_target = None
             else:
@@ -362,7 +404,21 @@ class AnimalAI:
                     if other.species == 'deer' and getattr(other, 'state', '') == 'AGGRESSIVE':
                         fx -= (dx / dist) * self.weights['prey'] * 2.0
                         fy -= (dy / dist) * self.weights['prey'] * 2.0
-                elif entity.species in ['rabbit', 'deer'] and other.species == 'wolf':
+                elif (
+                    entity.species == 'snake'
+                    and other.species == 'fish'
+                    and getattr(other, 'underwater', False)
+                    and entity.hunger < entity.max_hunger * 0.9
+                ):
+                    fx += (dx / dist) * self.weights['prey']
+                    fy += (dy / dist) * self.weights['prey']
+                elif (
+                    entity.species in ['rabbit', 'deer']
+                    and (
+                        other.species == 'wolf'
+                        or (entity.species == 'rabbit' and other.species == 'snake')
+                    )
+                ):
                     # Predator
                     if entity.state == "AGGRESSIVE":
                         # Rush the wolf to push it away
@@ -372,6 +428,16 @@ class AnimalAI:
                         fx += (dx / dist) * current_predator_weight
                         fy += (dy / dist) * current_predator_weight
                         entity.ai.update_memory(entity.x, entity.y, 5, 'danger') # Negative association
+                elif entity.species == 'sparrow' and other.species in ['hawk', 'snake', 'wolf']:
+                    if dist < 180 and not getattr(entity, 'is_hidden', False):
+                        escape_weight = 4.0 if entity.flying else 2.0
+                        fx -= (dx / dist) * escape_weight
+                        fy -= (dy / dist) * escape_weight
+                elif entity.species == 'fish' and other.species in ['hawk', 'snake']:
+                    if dist < 140:
+                        escape_weight = 8.0 * (1 - dist / 140)
+                        fx -= (dx / dist) * escape_weight
+                        fy -= (dy / dist) * escape_weight
                 elif entity.species == other.species:
                     separation_range = 100 if entity.species == 'wolf' else 35
                     if dist < separation_range:
@@ -469,12 +535,52 @@ class AnimalAI:
                 fx += entity.wander_dir_x * wander_weight
                 fy += entity.wander_dir_y * wander_weight
 
+        if entity.species == 'fish':
+            margin = entity.radius + 12
+            if entity.x < margin + 40:
+                fx += (margin + 40 - entity.x) / 40 * 3.0
+            elif entity.x > config.SCREEN_WIDTH - margin - 40:
+                fx -= (entity.x - (config.SCREEN_WIDTH - margin - 40)) / 40 * 3.0
+            river = world.river
+            bank_buffer = 10
+            safe_top = river.y + entity.radius + 2 + bank_buffer
+            safe_bottom = river.y + river.h - entity.radius - 2 - bank_buffer
+            if entity.y < safe_top:
+                fy += (safe_top - entity.y) / bank_buffer * 2.0
+            elif entity.y > safe_bottom:
+                fy -= (entity.y - safe_bottom) / bank_buffer * 2.0
+        else:
+            if entity.species == 'deer':
+                margin = entity.radius + 80
+                if entity.x < margin:
+                    fx += (margin - entity.x) / 80 * 6.0
+                elif entity.x > config.SCREEN_WIDTH - margin:
+                    fx -= (entity.x - (config.SCREEN_WIDTH - margin)) / 80 * 6.0
+                if entity.y < margin:
+                    fy += (margin - entity.y) / 80 * 6.0
+                elif entity.y > config.SCREEN_HEIGHT - margin:
+                    fy -= (entity.y - (config.SCREEN_HEIGHT - margin)) / 80 * 6.0
+            else:
+                margin = entity.radius + 12
+                if entity.x < margin:
+                    fx += (margin - entity.x) / margin * 2.0
+                elif entity.x > config.SCREEN_WIDTH - margin:
+                    fx -= (entity.x - (config.SCREEN_WIDTH - margin)) / margin * 2.0
+                if entity.y < margin:
+                    fy += (margin - entity.y) / margin * 2.0
+                elif entity.y > config.SCREEN_HEIGHT - margin:
+                    fy -= (entity.y - (config.SCREEN_HEIGHT - margin)) / margin * 2.0
+
         # Keep animals exploring in a steady direction instead of relying on
         # tick-to-tick random jitter, which can be canceled by herd forces.
         entity.roam_timer -= 1
         if entity.roam_timer <= 0:
             entity.roam_direction = random.uniform(0, math.tau)
-            entity.roam_timer = random.randint(90, 180)
+            entity.roam_timer = (
+                random.randint(25, 60)
+                if entity.species == 'fish'
+                else random.randint(90, 180)
+            )
 
         roam_weight = 0.8
         if entity.species in ['rabbit', 'deer'] and hunger_ratio > 0.8 and thirst_ratio > 0.8:

@@ -20,12 +20,17 @@ class Simulator:
         self.world = World()
         self.world.spatial_hash = __import__('world').SpatialHash(cell_size=150)
         self.animals = []
-        self._init_animals(10, 10, 10, 10, 5, 5, 3)
+        self._init_animals(25, 20, 0, 0, 0, 0, 0)
+        self.initial_herbivore_season_active = True
+        self.later_animal_counts = (3, 10, 5, 25, 4)
+        for animal in self.animals:
+            if animal.species in ['rabbit', 'deer']:
+                animal.is_adult = True
 
         self.running = True
         self.headless = headless
 
-    def _init_animals(self, num_rabbits, num_deer, num_wolves, num_fish, num_snakes=5, num_sparrows=5, num_hawks=3):
+    def _init_animals(self, num_rabbits, num_deer, num_wolves, num_fish, num_snakes, num_sparrows, num_hawks):
         for _ in range(num_rabbits):
             x = random.randint(0, config.SCREEN_WIDTH)
             y = random.randint(0, config.SCREEN_HEIGHT)
@@ -66,7 +71,16 @@ class Simulator:
             self.animals.append(Hawk(x, y))
 
     def update(self):
+        previous_season = self.world.season
         self.world.update()
+        if (
+            self.initial_herbivore_season_active
+            and previous_season == "spring"
+            and self.world.season == "summer"
+        ):
+            wolves, fish, snakes, sparrows, hawks = self.later_animal_counts
+            self._init_animals(0, 0, wolves, fish, snakes, sparrows, hawks)
+            self.initial_herbivore_season_active = False
 
         self.world.spatial_hash.clear()
         for entity in self.animals:
@@ -132,6 +146,18 @@ class Simulator:
         for tree in self.world.trees:
             pygame.draw.circle(self.screen, config.C_TREE, (int(tree.x), int(tree.y)), tree.radius)
 
+        # Draw nests on the trees where birds can perch.
+        for nest in self.world.nests:
+            nest_rect = pygame.Rect(int(nest.x - 9), int(nest.y - 11), 18, 8)
+            pygame.draw.ellipse(self.screen, (101, 67, 33), nest_rect, 2)
+            pygame.draw.line(
+                self.screen,
+                (101, 67, 33),
+                (int(nest.x - 7), int(nest.y - 7)),
+                (int(nest.x + 7), int(nest.y - 7)),
+                2,
+            )
+
         # Draw Animals
         for a in self.animals:
             color = config.C_RABBIT
@@ -145,7 +171,9 @@ class Simulator:
             if getattr(a, 'is_hidden', False):
                 if a.species == 'rabbit':
                     color = (max(0, color[0] - 80), max(0, color[1] - 80), max(0, color[2] - 80))
-                else:
+                elif a.species == 'fish' and getattr(a, 'underwater', False):
+                    color = (max(0, color[0] - 40), max(0, color[1] - 40), min(255, color[2] + 40))
+                elif a.species not in ['sparrow', 'hawk']:
                     continue
 
             if getattr(a, 'climbing_tree', None) is not None:
@@ -177,12 +205,20 @@ class Simulator:
         rabbits = sum(1 for a in self.animals if a.species == 'rabbit')
         deers = sum(1 for a in self.animals if a.species == 'deer')
         wolves = sum(1 for a in self.animals if a.species == 'wolf')
+        fish = sum(1 for a in self.animals if a.species == 'fish')
+        snakes = sum(1 for a in self.animals if a.species == 'snake')
+        sparrows = sum(1 for a in self.animals if a.species == 'sparrow')
+        hawks = sum(1 for a in self.animals if a.species == 'hawk')
 
         ui_texts = [
             f"Season: {self.world.season.capitalize()} (Tick: {self.world.season_tick}/{config.SEASON_LENGTH})",
             f"Rabbits: {rabbits}",
             f"Deers: {deers}",
             f"Wolves: {wolves}",
+            f"Fish: {fish}",
+            f"Snakes: {snakes}",
+            f"Sparrows: {sparrows}",
+            f"Hawks: {hawks}",
             f"Trees: {len(self.world.trees)} | Bushes: {len(self.world.bushes)}"
         ]
 

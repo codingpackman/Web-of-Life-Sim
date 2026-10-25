@@ -168,8 +168,9 @@ class River:
 
 class World:
     def __init__(self):
-        self.season = "summer"
+        self.season = "spring"
         self.season_tick = 0
+        self.initial_season = True
         self.trees = []
         self.bushes = []
         self.water_holes = []
@@ -213,9 +214,15 @@ class World:
 
     def update(self):
         self.season_tick += 1
-        if self.season_tick >= config.SEASON_LENGTH:
+        season_length = (
+            config.INITIAL_HERBIVORE_SEASON_TICKS
+            if self.initial_season
+            else config.SEASON_LENGTH
+        )
+        if self.season_tick >= season_length:
             self.season_tick = 0
             self._advance_season()
+            self.initial_season = False
 
         # Update plants
         for tree in self.trees:
@@ -226,10 +233,14 @@ class World:
             carcass.update()
         for egg in self.eggs:
             egg.update()
-            if egg.dead and len(egg.parents) == 2:
+            if egg.dead and egg.species == 'fish' and len(egg.parents) < 2:
+                if egg.parents:
+                    egg.parents[0].pregnant = False
+            elif egg.dead and len(egg.parents) == 2:
                 import animals
                 if egg.species == 'fish':
                     baby = animals.Fish(egg.x, egg.y, parents=egg.parents)
+                    egg.parents[0].pregnant = False
                 elif egg.species == 'snake':
                     baby = animals.Snake(egg.x, egg.y, parents=egg.parents)
                 elif egg.species == 'sparrow':
@@ -239,6 +250,9 @@ class World:
                 else:
                     continue
                 baby.mutate()
+                for parent in egg.parents:
+                    if getattr(parent, 'gender', None) == 'female':
+                        parent.pregnant = False
                 if not hasattr(self, 'hatched_animals'):
                     self.hatched_animals = []
                 self.hatched_animals.append(baby)
