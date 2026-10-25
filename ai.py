@@ -539,37 +539,49 @@ class AnimalAI:
             margin = entity.radius + 12
             if entity.x < margin + 40:
                 fx += (margin + 40 - entity.x) / 40 * 3.0
+                entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
             elif entity.x > config.SCREEN_WIDTH - margin - 40:
                 fx -= (entity.x - (config.SCREEN_WIDTH - margin - 40)) / 40 * 3.0
+                entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
             river = world.river
             bank_buffer = 10
             safe_top = river.y + entity.radius + 2 + bank_buffer
             safe_bottom = river.y + river.h - entity.radius - 2 - bank_buffer
             if entity.y < safe_top:
                 fy += (safe_top - entity.y) / bank_buffer * 2.0
+                entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
             elif entity.y > safe_bottom:
                 fy -= (entity.y - safe_bottom) / bank_buffer * 2.0
+                entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
         else:
             if entity.species == 'deer':
                 margin = entity.radius + 80
                 if entity.x < margin:
                     fx += (margin - entity.x) / 80 * 6.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
                 elif entity.x > config.SCREEN_WIDTH - margin:
                     fx -= (entity.x - (config.SCREEN_WIDTH - margin)) / 80 * 6.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
                 if entity.y < margin:
                     fy += (margin - entity.y) / 80 * 6.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
                 elif entity.y > config.SCREEN_HEIGHT - margin:
                     fy -= (entity.y - (config.SCREEN_HEIGHT - margin)) / 80 * 6.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
             else:
                 margin = entity.radius + 12
                 if entity.x < margin:
                     fx += (margin - entity.x) / margin * 2.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
                 elif entity.x > config.SCREEN_WIDTH - margin:
                     fx -= (entity.x - (config.SCREEN_WIDTH - margin)) / margin * 2.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
                 if entity.y < margin:
                     fy += (margin - entity.y) / margin * 2.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
                 elif entity.y > config.SCREEN_HEIGHT - margin:
                     fy -= (entity.y - (config.SCREEN_HEIGHT - margin)) / margin * 2.0
+                    entity.roam_direction = (entity.roam_direction + math.pi) % math.tau
 
         # Keep animals exploring in a steady direction instead of relying on
         # tick-to-tick random jitter, which can be canceled by herd forces.
