@@ -267,6 +267,7 @@ class Rabbit(Animal):
         super().__init__(x, y, 'rabbit', parents)
         self.home_burrow = None
         self.carried_food = 0
+        self.daily_phase = "ROAMING"
 
     def update(self, world, animals):
         if not self.is_adult and world.season == "spring" and getattr(self, "home_burrow", None):
@@ -285,50 +286,78 @@ class Rabbit(Animal):
                     self.home_burrow.occupants.remove(self)
                 self.home_burrow = None
 
-        if self.hunger >= self.max_hunger and self.state != "FLEEING":
-            self.state = "HOARDING"
-
         at_burrow = bool(
             self.home_burrow
             and math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) < 20
         )
-        self.is_hidden = self.state == "FLEEING" and at_burrow
+        self.is_hidden = self.state in ["FLEEING", "SLEEPING"] and at_burrow
 
         self._eat_from_burrow()
 
-        # Deposit food in burrow during update phase to ensure it's captured
-        if self.home_burrow and self.carried_food > 0:
-            if math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) < 20:
-                available_space = max(
-                    0,
-                    config.BURROW_MAX_FOOD - self.home_burrow.food_stored,
+        if self.home_burrow is None:
+            self.state = "SEARCHING"
+            if self.gender == "female":
+                for b in world.burrows:
+                    if b.owner_female is None and b.owner_male is not None and not b.owner_male.dead:
+                        if math.hypot(self.x - b.x, self.y - b.y) < 50:
+                            self.home_burrow = b
+                            b.owner_female = self
+                            b.occupants.append(self)
+                            break
+            elif self.gender == "male":
+                found = False
+                for b in world.burrows:
+                    if b.owner_male is None and b.owner_female is None:
+                        if math.hypot(self.x - b.x, self.y - b.y) < 50:
+                            self.home_burrow = b
+                            b.owner_male = self
+                            b.occupants.append(self)
+                            found = True
+                            break
+                if not found and random.random() < 0.01 and self._is_good_burrow_site(world):
+                    b = world_mod.Burrow(self.x, self.y)
+                    world.burrows.append(b)
+                    self.home_burrow = b
+                    b.owner_male = self
+                    b.occupants.append(self)
+        else:
+            if self.carried_food > 0:
+                if math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) < 20:
+                    available_space = max(
+                        0,
+                        config.BURROW_MAX_FOOD - self.home_burrow.food_stored,
+                    )
+                    stored_food = min(self.carried_food, available_space)
+                    self.home_burrow.food_stored += stored_food
+                    self.carried_food -= stored_food
+                    if self.home_burrow.food_stored >= config.BURROW_MAX_FOOD:
+                        self.carried_food = 0
+
+            # Only assign non-emergency states if not already starving/dehydrated/fleeing
+            if self.state not in ["STARVING", "DEHYDRATED", "FLEEING"]:
+                # Check if we need to feed babies in spring
+                has_babies = any(
+                    occupant for occupant in self.home_burrow.occupants
+                    if occupant.species == 'rabbit' and not occupant.is_adult and getattr(occupant, 'parents', None) and self in occupant.parents
                 )
-                stored_food = min(self.carried_food, available_space)
-                self.home_burrow.food_stored += stored_food
-                self.carried_food -= stored_food
-                if self.home_burrow.food_stored >= config.BURROW_MAX_FOOD:
-                    self.carried_food = 0
-                if self.hunger < self.max_hunger:
+
+                if (world.season in ["fall", "winter"] or self.home_burrow.food_stored < config.BURROW_MAX_FOOD) or (world.season == "spring" and has_babies):
                     self.state = "FORAGING"
+                else:
+                    block = int((world.season_tick % config.DAY_LENGTH) // (config.DAY_LENGTH / 4))
+                    mem = getattr(self, 'ai', None)
+                    if mem is not None:
+                        mem = mem.get_location_memory(self.x, self.y)
+                    else:
+                        mem = {}
+                    max_danger_block = 3 if mem.get('danger_night', 0) > mem.get('danger_day', 0) else 1
 
-        # Dig burrow if male adult and no home
-        if self.gender == "male" and self.is_adult and not self.home_burrow:
-            if random.random() < 0.01 and self._is_good_burrow_site(world):
-                b = Burrow(self.x, self.y)
-                world.burrows.append(b)
-                self.home_burrow = b
-                b.owner_male = self
-                b.occupants.append(self)
-
-        # Find burrow if female
-        if self.gender == "female" and self.is_adult and not self.home_burrow:
-            for b in world.burrows:
-                if b.owner_female is None and b.owner_male is not None and not b.owner_male.dead:
-                    if math.hypot(self.x - b.x, self.y - b.y) < 50:
-                        self.home_burrow = b
-                        b.owner_female = self
-                        b.occupants.append(self)
-                        break
+                    if block == max_danger_block:
+                        self.state = "SLEEPING"
+                    elif block % 2 == 0:
+                        self.state = "ROAMING"
+                    else:
+                        self.state = "SOCIALIZING"
 
     def _is_good_burrow_site(self, world):
         if world.in_water(self.x, self.y):
@@ -604,23 +633,6 @@ class Fish(Animal):
         super().update(world, animals)
         if self.dead:
             return
-
-        min_x = self.radius + 12
-        max_x = config.SCREEN_WIDTH - self.radius - 12
-        min_y = world.river.y + self.radius + 2
-        max_y = world.river.y + world.river.h - self.radius - 2
-        if self.x <= min_x:
-            self.x = min_x
-            self.vx = abs(self.vx)
-        elif self.x >= max_x:
-            self.x = max_x
-            self.vx = -abs(self.vx)
-        if self.y <= min_y:
-            self.y = min_y
-            self.vy = abs(self.vy)
-        elif self.y >= max_y:
-            self.y = max_y
-            self.vy = -abs(self.vy)
 
     def eat(self, world):
         pass
@@ -1013,6 +1025,7 @@ class Hawk(Animal):
         self.flying = start_flying
         self.in_tree = None
         self.home_nest = None
+        self.home_tree = None
         self.dive_target = None
         self.dive_timer = 0
         self.dive_cooldown = 0
@@ -1029,6 +1042,8 @@ class Hawk(Animal):
         if parents and getattr(parents[0], 'home_nest', None):
             self.flying = False
             self.in_tree = parents[0].home_nest.tree
+            self.home_nest = parents[0].home_nest
+            self.home_tree = self.in_tree
             self.x, self.y = self.in_tree.x, self.in_tree.y
 
     def _nearest_tree(self, world):
@@ -1058,6 +1073,12 @@ class Hawk(Animal):
     def update(self, world, animals):
         if self.dead: return
 
+        if self.is_adult and self.home_nest and getattr(self, 'parents', None) and len(self.parents) > 0:
+            if self in self.home_nest.occupants:
+                self.home_nest.occupants.remove(self)
+            self.home_nest = None
+            self.home_tree = None
+
         if self.dive_cooldown > 0:
             self.dive_cooldown -= 1
         if self.landing_cooldown > 0:
@@ -1065,6 +1086,8 @@ class Hawk(Animal):
         if self.in_tree and self.in_tree.dead:
             self.in_tree = None
             self.perch_position = None
+        if self.home_tree and self.home_tree.dead:
+            self.home_tree = None
         if self.in_tree and not self.flying and self.perch_position:
             self.x, self.y = self.perch_position
 
@@ -1131,6 +1154,12 @@ class Hawk(Animal):
                     self.flight_goal = "water"
                     self.flight_target = self._water_target(world)
                     self.ground_target = None
+
+                if self.state == "PATROLLING" and self.home_tree is not None and not needs_water:
+                    self.ground_target = (
+                        self.home_tree.x + 50 * math.cos(self.flight_timer * 0.1),
+                        self.home_tree.y + 50 * math.sin(self.flight_timer * 0.1)
+                    )
 
                 if self.flight_goal == "water" and self.flight_target:
                     target_x, target_y = self.flight_target
@@ -1291,6 +1320,8 @@ class Hawk(Animal):
     def reproduce(self, world, animals):
         if world.season == "spring" and self.is_adult:
             if self.gender == "male" and not self.home_nest and self.in_tree:
+                if self.home_tree is None:
+                    self.home_tree = self.in_tree
                 has_nest = any(n.tree == self.in_tree for n in world.nests)
                 if not has_nest:
                     nest = world_mod.Nest(self.in_tree)
@@ -1299,13 +1330,13 @@ class Hawk(Animal):
                     nest.occupants.append(self)
 
             elif self.gender == "female" and not self.pregnant:
-                if self.in_tree:
-                    for nest in world.nests:
-                        if nest.tree == self.in_tree and len(nest.occupants) == 1 and nest.occupants[0].gender == 'male':
-                            self.home_nest = nest
-                            nest.occupants.append(self)
-                            num_eggs = random.randint(1, 2)
-                            for _ in range(num_eggs):
-                                world.eggs.append(world_mod.Egg(self.x, self.y, 'hawk', nest.occupants.copy()))
-                            self.pregnant = True
-                            break
+                for nest in world.nests:
+                    if len(nest.occupants) == 1 and nest.occupants[0].gender == 'male':
+                        self.home_nest = nest
+                        self.home_tree = nest.tree
+                        nest.occupants.append(self)
+                        num_eggs = random.randint(1, 2)
+                        for _ in range(num_eggs):
+                            world.eggs.append(world_mod.Egg(self.x, self.y, 'hawk', nest.occupants.copy()))
+                        self.pregnant = True
+                        break
