@@ -111,6 +111,29 @@ class AnimalAI:
             current_water_weight *= 10.0
             herd_multiplier = 0.0
 
+        if entity.state == "SLEEPING" and getattr(entity, 'home_burrow', None):
+            bdx = entity.home_burrow.x - entity.x
+            bdy = entity.home_burrow.y - entity.y
+            bdist = math.hypot(bdx, bdy)
+            if bdist > 0:
+                fx += (bdx / bdist) * 5.0
+                fy += (bdy / bdist) * 5.0
+                herd_multiplier = 0.0
+                current_food_weight = 0.0
+
+        if entity.state == "SOCIALIZING":
+            closest_friend = None
+            min_friend_dist = float('inf')
+            for other in animals:
+                if other != entity and other.species == entity.species and not other.dead:
+                    dist = math.hypot(other.x - entity.x, other.y - entity.y)
+                    if dist < 150 and dist < min_friend_dist:
+                        min_friend_dist = dist
+                        closest_friend = other
+            if closest_friend and min_friend_dist > 0:
+                fx += (closest_friend.x - entity.x) / min_friend_dist * 2.0
+                fy += (closest_friend.y - entity.y) / min_friend_dist * 2.0
+
         # Protective Herding logic (Adult male deer overriding state)
         if entity.species == 'deer' and entity.gender == 'male' and entity.is_adult and entity.state not in ["STARVING", "DEHYDRATED"]:
             baby_in_danger = False
@@ -267,16 +290,17 @@ class AnimalAI:
 
         # Water Repulsion if full
         if (
-            entity.species != 'fish'
+            entity.species not in ['fish', 'snake']
             and entity.thirst >= entity.max_thirst * 0.95
             and world.in_water(entity.x, entity.y)
         ):
             current_water_weight = -2.0
             if entity.y >= world.river.y and entity.y <= world.river.y + world.river.h:
-                if entity.y < world.river.y + world.river.h / 2:
-                    fy -= 5.0 # Push up out of river
-                else:
-                    fy += 5.0 # Push down out of river
+                if getattr(entity, 'state', 'FORAGING') not in ["HUNTING", "FLEEING"]:
+                    if entity.y < world.river.y + world.river.h / 2:
+                        fy -= 5.0 # Push up out of river
+                    else:
+                        fy += 5.0 # Push down out of river
             else:
                 for wh in world.water_holes:
                     if not wh.frozen:
