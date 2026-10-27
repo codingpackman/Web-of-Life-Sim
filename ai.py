@@ -185,7 +185,10 @@ class AnimalAI:
                 dy = target[1] - entity.y
                 distance = math.hypot(dx, dy)
                 if distance > 0:
-                    return dx / distance, dy / distance
+                    season_tick = getattr(world, 'season_tick', 0)
+                    offset = __import__('math').sin(season_tick * 0.1) * 2.0
+                    perp_dx, perp_dy = -dy / distance, dx / distance
+                    return (dx / distance) + perp_dx * offset, (dy / distance) + perp_dy * offset
 
         if entity.species == 'hawk' and getattr(entity, 'flying', False):
             target = getattr(entity, 'flight_target', None)

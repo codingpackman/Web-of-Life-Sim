@@ -120,11 +120,11 @@ class Carcass:
         self.y = y
         self.species = species
         if species == 'deer':
-            self.nutrients, self.radius = 300, 12
+            self.nutrients, self.radius = 600, 12
         elif species == 'wolf':
-            self.nutrients, self.radius = 150, 8
+            self.nutrients, self.radius = 300, 8
         else:
-            self.nutrients, self.radius = 50, 5
+            self.nutrients, self.radius = 100, 5
         self.max_nutrients = self.nutrients
         self.dead = False
 
