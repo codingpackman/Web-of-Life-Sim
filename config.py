@@ -27,27 +27,27 @@ C_WOLF = (105, 105, 105)         # Dim Gray
 # Season lengths in ticks (assuming 60 ticks per second)
 SEASON_LENGTH = 3600
 DAY_LENGTH = 1800
-INITIAL_HERBIVORE_SEASON_TICKS = 3600
+INITIAL_HERBIVORE_SEASON_TICKS = 7200
 RABBIT_BURROW_RANGE = 250
-FISH_DIVE_DURATION = 60
-FISH_DIVE_COOLDOWN = 240
-FISH_UNDERWATER_SPEED = 5.0
+FISH_DIVE_DURATION = 120
+FISH_DIVE_COOLDOWN = 480
+FISH_UNDERWATER_SPEED = 2.5
 
 # Hawk hunting behavior (dive speed and turn limit apply only while diving).
-HAWK_DIVE_SPEED = 5.0
-HAWK_DIVE_TURN_RATE_DEGREES = 5
-HAWK_DIVE_DURATION = 60
-HAWK_HUNT_COOLDOWN = 180
-BIRD_LANDING_COOLDOWN = 220
+HAWK_DIVE_SPEED = 2.5
+HAWK_DIVE_TURN_RATE_DEGREES = 2.5
+HAWK_DIVE_DURATION = 120
+HAWK_HUNT_COOLDOWN = 360
+BIRD_LANDING_COOLDOWN = 440
 HAWK_SPARROW_DETECTION_RANGE = 120
 PREDATOR_FULL_COOLDOWN = SEASON_LENGTH
 
 # Plant Attributes
 TREE_MAX_LEAVES = 50
-TREE_LEAF_NUTRIENT = 20
+TREE_LEAF_NUTRIENT = 40
 TREE_SEED_LEAF_INTERVAL = 20
 BUSH_MAX_BERRIES = 10
-BERRY_NUTRIENT = 50
+BERRY_NUTRIENT = 100
 BUSH_SEED_DROP_CHANCE = 0.1
 BURROW_MAX_FOOD = 20
 PLANT_MAX_AGE = 20000
@@ -55,96 +55,96 @@ PLANT_MAX_AGE = 20000
 # Animal Base Attributes
 ANIMAL_STATS = {
     'rabbit': {
-        'max_hunger': 300,
+        'max_hunger': 600,
         'hunger_loss': 0.0125,
         'health': 20,
-        'speed': 0.75,
-        'sprint_speed': 2.5,
-        'stamina': 50,
-        'max_thirst': 300,
+        'speed': 0.375,
+        'sprint_speed': 1.25,
+        'stamina': 100,
+        'max_thirst': 600,
         'thirst_loss': 0.025,
-        'water_speed': 0.25,
-        'lifespan': 20000,
+        'water_speed': 0.125,
+        'lifespan': 40000,
         'radius': 5
     },
     'deer': {
-        'max_hunger': 600,
+        'max_hunger': 1200,
         'hunger_loss': 0.075,
         'health': 100,
-        'speed': 1.0,
-        'sprint_speed': 2.00,
-        'stamina': 100,
-        'max_thirst': 300,
+        'speed': 0.5,
+        'sprint_speed': 1.00,
+        'stamina': 200,
+        'max_thirst': 600,
         'thirst_loss': 0.025,
-        'water_speed': 1.0,
-        'lifespan': 30000,
+        'water_speed': 0.5,
+        'lifespan': 60000,
         'radius': 10
     },
     'wolf': {
-        'max_hunger': 500,
+        'max_hunger': 1000,
         'hunger_loss': 0.0125,
         'health': 80,
-        'speed': 0.8,
-        'sprint_speed': 1.625,
-        'stamina': 200,
-        'max_thirst': 400,
+        'speed': 0.4,
+        'sprint_speed': 0.8125,
+        'stamina': 400,
+        'max_thirst': 800,
         'thirst_loss': 0.025,
-        'water_speed': 0.4,
-        'lifespan': 30000,
+        'water_speed': 0.2,
+        'lifespan': 60000,
         'radius': 8,
         'damage': 25
         },
     'fish': {
-        'max_hunger': 100,
+        'max_hunger': 200,
         'hunger_loss': 0,
         'health': 10,
-        'speed': 1.5,
-        'sprint_speed': 3.0,
-        'stamina': 30,
-        'max_thirst': 100,
+        'speed': 0.75,
+        'sprint_speed': 1.5,
+        'stamina': 60,
+        'max_thirst': 200,
         'thirst_loss': 0,
-        'water_speed': 2.0,
-        'lifespan': 25000,
+        'water_speed': 1.0,
+        'lifespan': 50000,
         'radius': 4
     },
     'snake': {
-        'max_hunger': 200,
+        'max_hunger': 400,
         'hunger_loss': 0.005,
         'health': 30,
-        'speed': 0.4,
-        'sprint_speed': 1.0,
-        'stamina': 40,
-        'max_thirst': 300,
+        'speed': 0.2,
+        'sprint_speed': 0.5,
+        'stamina': 80,
+        'max_thirst': 600,
         'thirst_loss': 0.01,
-        'water_speed': 0.4,
-        'lifespan': 20000,
+        'water_speed': 0.2,
+        'lifespan': 40000,
         'radius': 4,
         'damage': 15
     },
     'sparrow': {
-        'max_hunger': 300,
+        'max_hunger': 600,
         'hunger_loss': 0.05,
         'health': 10,
-        'speed': 0.5, # slow on ground
-        'sprint_speed': 3.0, # fast flying
-        'stamina': 500,
-        'max_thirst': 300,
+        'speed': 0.25, # slow on ground
+        'sprint_speed': 1.5, # fast flying
+        'stamina': 1000,
+        'max_thirst': 600,
         'thirst_loss': 0.02,
         'water_speed': 0,
-        'lifespan': 25000,
+        'lifespan': 50000,
         'radius': 3
     },
     'hawk': {
-        'max_hunger': 500,
+        'max_hunger': 1000,
         'hunger_loss': 0.05,
         'health': 50,
-        'speed': 1.0,
-        'sprint_speed': 1.0,
-        'stamina': 100,
-        'max_thirst': 300,
+        'speed': 0.5,
+        'sprint_speed': 0.5,
+        'stamina': 200,
+        'max_thirst': 600,
         'thirst_loss': 0.02,
         'water_speed': 0,
-        'lifespan': 30000,
+        'lifespan': 60000,
         'radius': 6,
         'damage': 20
     }

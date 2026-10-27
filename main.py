@@ -112,10 +112,13 @@ class Simulator:
         if season_tick > day_length:
             night_tick = season_tick - day_length
             half_night = day_length / 2
-            if night_tick < half_night:
-                darkness = min(150, int((night_tick / half_night) * 150))
+            transition_duration = half_night * 0.2
+            if night_tick < transition_duration:
+                darkness = min(150, int((night_tick / transition_duration) * 150))
+            elif night_tick > day_length - transition_duration:
+                darkness = min(150, int(((day_length - night_tick) / transition_duration) * 150))
             else:
-                darkness = min(150, int(((day_length - night_tick) / half_night) * 150))
+                darkness = 150
 
         # Draw River
         pygame.draw.rect(self.screen, config.C_RIVER, (self.world.river.x, self.world.river.y, self.world.river.w, self.world.river.h))
