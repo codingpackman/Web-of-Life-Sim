@@ -229,6 +229,8 @@ class Animal:
         # Actually, let's keep it here but let ai.py handle complex states. Wait, ai.py just uses state.
         # The prompt says: "In Rabbit.update, set self.is_hidden = True if the rabbit's state is "FLEEING", it has a home_burrow, and is within 10 pixels of it. Otherwise, set it to False."
         if predator_near:
+            if self.species == 'rabbit':
+                self.danger_memory[self.day_cycle] += 1
             if self.state not in ["STARVING", "DEHYDRATED"]:
                 self.state = "FLEEING"
             # Rabbit burrow reinforcement
@@ -267,6 +269,12 @@ class Rabbit(Animal):
         super().__init__(x, y, 'rabbit', parents)
         self.home_burrow = None
         self.carried_food = 0
+        self.schedule = ["ROAMING", "ROAMING", "ROAMING", "ROAMING"]
+        self.danger_memory = {0: 0, 1: 0, 2: 0, 3: 0}
+        self.searching_ticks = 0
+        self.day_cycle = 0
+        self.last_day = -1
+        self.state = "SEARCHING"
 
     def update(self, world, animals):
         if not self.is_adult and world.season == "spring" and getattr(self, "home_burrow", None):
@@ -279,20 +287,68 @@ class Rabbit(Animal):
         super().update(world, animals)
         if self.dead: return
 
+        # Day cycle and schedule assignment
+        day = getattr(world, 'season_tick', 0) // config.DAY_LENGTH
+        cycle_len = config.DAY_LENGTH // 4
+        self.day_cycle = (getattr(world, 'season_tick', 0) % config.DAY_LENGTH) // cycle_len
+
+        if day != self.last_day:
+            self.last_day = day
+            # Rebuild schedule
+            highest_danger_cycle = max(self.danger_memory, key=self.danger_memory.get)
+            new_schedule = []
+            for i in range(4):
+                if i == highest_danger_cycle:
+                    new_schedule.append("SLEEPING")
+                else:
+                    new_schedule.append(random.choice(["ROAMING", "SOCIALIZING"]))
+            self.schedule = new_schedule
+            # Reset danger memory for the new day
+            self.danger_memory = {0: 0, 1: 0, 2: 0, 3: 0}
+
         if self.is_adult and self.home_burrow:
             if self.home_burrow.owner_male != self and self.home_burrow.owner_female != self:
                 if self in self.home_burrow.occupants:
                     self.home_burrow.occupants.remove(self)
                 self.home_burrow = None
 
-        if self.hunger >= self.max_hunger and self.state != "FLEEING":
-            self.state = "HOARDING"
+        # Determine if we have babies
+        has_babies = False
+        if self.home_burrow:
+            for occ in self.home_burrow.occupants:
+                if not getattr(occ, 'is_adult', False):
+                    has_babies = True
+                    break
+
+        # Emergency overrides for state
+        if self.state not in ["FLEEING", "STARVING", "DEHYDRATED"]:
+            if not self.home_burrow and self.is_adult:
+                self.state = "SEARCHING"
+                self.searching_ticks += 1
+            elif self.thirst < self.max_thirst * 0.5:
+                self.state = "DRINKING"
+            elif self.hunger < self.max_hunger * 0.6:
+                # Need food, either burrow or forage
+                if self.home_burrow and self.home_burrow.food_stored > 0:
+                    self.state = "EATING"
+                else:
+                    self.state = "FORAGING"
+            elif self.schedule[self.day_cycle] == "SLEEPING":
+                self.state = "SLEEPING"
+            elif self.home_burrow and (
+                self.home_burrow.food_stored < 10 or
+                (world.season == "fall" and self.home_burrow.food_stored < config.BURROW_MAX_FOOD) or
+                (world.season == "spring" and has_babies)
+            ):
+                self.state = "FORAGING"
+            else:
+                self.state = self.schedule[self.day_cycle]
 
         at_burrow = bool(
             self.home_burrow
             and math.hypot(self.x - self.home_burrow.x, self.y - self.home_burrow.y) < 20
         )
-        self.is_hidden = self.state == "FLEEING" and at_burrow
+        self.is_hidden = self.state in ["FLEEING", "HIDING", "SLEEPING"] and at_burrow
 
         self._eat_from_burrow()
 
@@ -308,26 +364,26 @@ class Rabbit(Animal):
                 self.carried_food -= stored_food
                 if self.home_burrow.food_stored >= config.BURROW_MAX_FOOD:
                     self.carried_food = 0
-                if self.hunger < self.max_hunger:
-                    self.state = "FORAGING"
 
         # Dig burrow if male adult and no home
-        if self.gender == "male" and self.is_adult and not self.home_burrow:
-            if random.random() < 0.01 and self._is_good_burrow_site(world):
+        if self.state == "SEARCHING" and self.gender == "male" and self.is_adult and not self.home_burrow:
+            if self.searching_ticks > 500 and self._is_good_burrow_site(world):
                 b = Burrow(self.x, self.y)
                 world.burrows.append(b)
                 self.home_burrow = b
                 b.owner_male = self
                 b.occupants.append(self)
+                self.searching_ticks = 0
 
         # Find burrow if female
-        if self.gender == "female" and self.is_adult and not self.home_burrow:
+        if self.state == "SEARCHING" and self.gender == "female" and self.is_adult and not self.home_burrow:
             for b in world.burrows:
                 if b.owner_female is None and b.owner_male is not None and not b.owner_male.dead:
                     if math.hypot(self.x - b.x, self.y - b.y) < 50:
                         self.home_burrow = b
                         b.owner_female = self
                         b.occupants.append(self)
+                        self.searching_ticks = 0
                         break
 
     def _is_good_burrow_site(self, world):

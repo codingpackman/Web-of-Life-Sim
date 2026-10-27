@@ -173,19 +173,20 @@ class AnimalAI:
                 if distance > 0:
                     return dx / distance, dy / distance
 
-        if getattr(entity, 'state', 'FORAGING') == 'FLEEING':
+        if getattr(entity, 'state', 'FORAGING') in ['FLEEING', 'HIDING', 'SLEEPING']:
             current_food_weight = 0.0
-            current_predator_weight *= 3.0
+            if getattr(entity, 'state', 'FORAGING') == 'FLEEING':
+                current_predator_weight *= 3.0
 
             if entity.species == 'rabbit' and hasattr(entity, 'home_burrow') and entity.home_burrow:
-                # Strong attraction to burrow while fleeing
+                # Strong attraction to burrow
                 bdx = entity.home_burrow.x - entity.x
                 bdy = entity.home_burrow.y - entity.y
                 bdist = math.hypot(bdx, bdy)
                 if bdist > 0:
                     fx += (bdx / bdist) * self.weights['burrow'] * 5.0
 
-        if getattr(entity, 'state', 'FORAGING') == 'HOARDING':
+        if getattr(entity, 'state', 'FORAGING') == 'FORAGING':
             current_food_weight *= 2.0
             if (
                 entity.species == 'rabbit'
@@ -201,32 +202,40 @@ class AnimalAI:
                 if bdist > 0:
                     fx += (bdx / bdist) * self.weights['burrow'] * 3.0
 
-        if entity.species == 'rabbit' and getattr(entity, 'home_burrow', None):
+        if getattr(entity, 'state', 'FORAGING') == 'EATING' and entity.species == 'rabbit' and getattr(entity, 'home_burrow', None):
+            current_food_weight = 0.0
+            bdx = entity.home_burrow.x - entity.x
+            bdy = entity.home_burrow.y - entity.y
+            bdist = math.hypot(bdx, bdy)
+            if bdist > 0:
+                fx += (bdx / bdist) * self.weights['burrow'] * 5.0
+
+        if entity.species == 'rabbit' and getattr(entity, 'state', None) in ['ROAMING', 'SOCIALIZING'] and getattr(entity, 'home_burrow', None):
             bdx = entity.home_burrow.x - entity.x
             bdy = entity.home_burrow.y - entity.y
             bdist = math.hypot(bdx, bdy)
             if bdist > config.RABBIT_BURROW_RANGE:
-                range_pressure = min(
-                    2.5,
-                    1.0 + (bdist - config.RABBIT_BURROW_RANGE) / 100,
-                )
+                range_pressure = min(1.5, (bdist - config.RABBIT_BURROW_RANGE) / 50)
                 fx += (bdx / bdist) * range_pressure
                 fy += (bdy / bdist) * range_pressure
 
-        if (
-            entity.species == 'rabbit'
-            and getattr(entity, 'home_burrow', None)
-            and entity.home_burrow.food_stored > 0
-            and entity.hunger < entity.max_hunger
-        ):
-            bdx = entity.home_burrow.x - entity.x
-            bdy = entity.home_burrow.y - entity.y
-            bdist = math.hypot(bdx, bdy)
-            if 0 < bdist < 350:
-                fx += (bdx / bdist) * self.weights['burrow'] * 3.0
+        if entity.species == 'rabbit' and getattr(entity, 'state', None) == 'SEARCHING' and entity.gender == 'female' and not getattr(entity, 'home_burrow', None):
+            best_burrow = None
+            best_dist = float('inf')
+            for b in world.burrows:
+                if b.owner_female is None and b.owner_male is not None and not b.owner_male.dead:
+                    d = math.hypot(b.x - entity.x, b.y - entity.y)
+                    if d < best_dist:
+                        best_dist = d
+                        best_burrow = b
+            if best_burrow:
+                bdx = best_burrow.x - entity.x
+                bdy = best_burrow.y - entity.y
+                if best_dist > 0:
+                    fx += (bdx / best_dist) * self.weights['burrow'] * 2.0
 
         # 1. Food attraction
-        if entity.species in ['rabbit', 'deer', 'sparrow'] and current_food_weight > 0:
+        if entity.species in ['rabbit', 'deer', 'sparrow'] and current_food_weight > 0 and getattr(entity, 'state', None) not in ['EATING']:
             # Herbivores seek plants
             closest_plant = None
             min_dist = float('inf')
@@ -457,6 +466,8 @@ class AnimalAI:
             if math.hypot(avg_vx, avg_vy) > 0:
                 mag = math.hypot(avg_vx, avg_vy)
                 social_weight = 0.2 if entity.species == 'deer' else 1.0
+                if entity.species == 'rabbit' and getattr(entity, 'state', None) == 'SOCIALIZING':
+                    social_weight *= 3.0
                 fx += (avg_vx / mag) * self.weights['alignment'] * herd_multiplier * social_weight
                 fy += (avg_vy / mag) * self.weights['alignment'] * herd_multiplier * social_weight
 
@@ -466,6 +477,8 @@ class AnimalAI:
             cdist = math.hypot(cdx, cdy)
             if cdist > 0:
                 social_weight = 0.2 if entity.species == 'deer' else 1.0
+                if entity.species == 'rabbit' and getattr(entity, 'state', None) == 'SOCIALIZING':
+                    social_weight *= 3.0
                 fx += (cdx / cdist) * self.weights['cohesion'] * herd_multiplier * social_weight
                 fy += (cdy / cdist) * self.weights['cohesion'] * herd_multiplier * social_weight
 
@@ -599,6 +612,8 @@ class AnimalAI:
             roam_weight = 1.5
         if entity.state in ["STARVING", "DEHYDRATED", "FLEEING"]:
             roam_weight = 0.25
+        if entity.state in ["SLEEPING", "HIDING"] or (entity.state == "EATING" and entity.species == 'rabbit'):
+            roam_weight = 0.0
 
         fx += math.cos(entity.roam_direction) * roam_weight
         fy += math.sin(entity.roam_direction) * roam_weight
